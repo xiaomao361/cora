@@ -1,0 +1,5 @@
+/clarion
+*.db
+*.db-shm
+*.db-wal
+**/target/

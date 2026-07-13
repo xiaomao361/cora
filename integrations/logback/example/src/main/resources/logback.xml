@@ -1,0 +1,19 @@
+<configuration>
+  <appender name="CLARION" class="io.clarion.logback.ClarionAppender">
+    <endpoint>${CLARION_ENDPOINT:-http://127.0.0.1:8080/v1/events:batch}</endpoint>
+    <productLine>${CLARION_PRODUCT_LINE:-demo}</productLine>
+    <service>${CLARION_SERVICE:-logback-example}</service>
+    <environment>${CLARION_ENVIRONMENT:-local}</environment>
+    <release>${CLARION_RELEASE:-dev}</release>
+    <queueCapacity>1024</queueCapacity>
+    <batchSize>100</batchSize>
+    <flushIntervalMillis>250</flushIntervalMillis>
+    <connectTimeoutMillis>500</connectTimeoutMillis>
+    <requestTimeoutMillis>1000</requestTimeoutMillis>
+    <stopTimeoutMillis>2000</stopTimeoutMillis>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="CLARION"/>
+  </root>
+</configuration>
