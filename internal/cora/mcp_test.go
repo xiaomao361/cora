@@ -26,10 +26,14 @@ func TestMCPProblemDetailRelatesSharedTracesAndBoundsBreadcrumbs(t *testing.T) {
 			Level: "INFO", Message: fmt.Sprintf("breadcrumb-%02d %s", index, strings.Repeat("上下文", 400)),
 		}
 	}
+	breadcrumbs[0].Message = "https://bucket.oss.example/a?OSSAccessKeyId=historical-key&Expires=1720000000&Signature=historical-signature " + breadcrumbs[0].Message
 	primary := Event{
 		ProductLine: "payments", Service: "checkout", Environment: "prod", TraceID: "trace-shared",
-		Logger: "com.example.Checkout", ExceptionType: "CheckoutFailure", Message: "checkout failed",
-		Stacktrace: "at com.example.Checkout.submit(Checkout.java:41)", Breadcrumbs: breadcrumbs,
+		Logger: "com.example.Checkout", ExceptionType: "CheckoutFailure",
+		Message:     "checkout failed https://bucket.s3.example/a?X-Amz-Credential=historical-credential&X-Amz-Signature=historical-amz-signature",
+		Stacktrace:  "at com.example.Checkout.submit(Checkout.java:41) https://bucket.oss.example/a?Signature=historical-stack-signature",
+		Labels:      map[string]string{"download": "https://bucket.oss.example/a?OSSAccessKeyId=historical-label-key"},
+		Breadcrumbs: breadcrumbs,
 	}
 	related := Event{
 		ProductLine: "payments", Service: "inventory", Environment: "prod", TraceID: "trace-shared",
@@ -76,7 +80,16 @@ func TestMCPProblemDetailRelatesSharedTracesAndBoundsBreadcrumbs(t *testing.T) {
 	if len(sample.Breadcrumbs) != mcpBreadcrumbLimit {
 		t.Fatalf("MCP breadcrumbs=%d, want %d", len(sample.Breadcrumbs), mcpBreadcrumbLimit)
 	}
-	if !strings.HasPrefix(sample.Breadcrumbs[0].Message, "breadcrumb-00") ||
+	sanitizedSample := output.Detail.Problem.FirstSample
+	for _, secret := range []string{"historical-key", "1720000000", "historical-signature", "historical-credential", "historical-amz-signature", "historical-stack-signature", "historical-label-key"} {
+		if strings.Contains(sanitizedSample, secret) {
+			t.Fatalf("historical signed URL secret %q leaked through MCP: %s", secret, sanitizedSample)
+		}
+	}
+	if !strings.Contains(sanitizedSample, "[REDACTED]") {
+		t.Fatalf("MCP sample missing signed URL redaction: %s", sanitizedSample)
+	}
+	if !strings.Contains(sample.Breadcrumbs[0].Message, "breadcrumb-00") ||
 		!strings.HasPrefix(sample.Breadcrumbs[len(sample.Breadcrumbs)-1].Message, "breadcrumb-11") {
 		t.Fatalf("bounded breadcrumbs lost chronological edges: %+v", sample.Breadcrumbs)
 	}
@@ -94,6 +107,9 @@ func TestMCPProblemDetailRelatesSharedTracesAndBoundsBreadcrumbs(t *testing.T) {
 	}
 	if len(sample.Breadcrumbs) != len(breadcrumbs) {
 		t.Fatalf("stored breadcrumbs=%d, want original %d", len(sample.Breadcrumbs), len(breadcrumbs))
+	}
+	if !strings.Contains(stored.Problem.FirstSample, "historical-key") {
+		t.Fatalf("read-time sanitization unexpectedly mutated stored sample: %s", stored.Problem.FirstSample)
 	}
 }
 
@@ -237,6 +253,20 @@ func TestMCPAttentionInvestigationOutcomeAndRecurrenceLoop(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	listResult = callMCPTool(t, ctx, session, "cora_list_attention", map[string]any{
+		"product_line": "payments",
+	})
+	decodeStructuredOutput(t, listResult, &listOutput)
+	acknowledgedVisible := false
+	for _, item := range listOutput.Attention {
+		if item.Fingerprint == Fingerprint(event2) && item.State == ProblemStateAcknowledged {
+			acknowledgedVisible = true
+			break
+		}
+	}
+	if !acknowledgedVisible {
+		t.Fatalf("acknowledged unhandled problem missing from attention: %+v", listOutput.Attention)
 	}
 
 	firstExportResult := callMCPTool(t, ctx, session, "cora_export_cases", map[string]any{

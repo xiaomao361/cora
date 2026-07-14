@@ -103,9 +103,10 @@ Agent does not wait for post-error logs, and breadcrumbs never participate in
 fingerprinting.
 
 Immediately before JSON encoding, the Agent redacts `Authorization`, token,
-password, and `cardNo`-style key/value fields, mainland mobile-number shapes,
-and 18-character identity-number shapes. Redaction covers the ERROR message,
-stacktrace, breadcrumbs, and labels; raw values are not sent to Cora Server.
+password, and `cardNo`-style key/value fields, signed OSS/S3 URL query
+credentials, mainland mobile-number shapes, and 18-character identity-number
+shapes. Redaction covers the ERROR message, stacktrace, breadcrumbs, and labels;
+raw values are not sent to Cora Server.
 
 ## Run locally
 

@@ -56,7 +56,8 @@ The repository now persists immutable product-line cases through the same MCP
 surface used for query, and exact Problem detail returns its prior cases.
 Problem detail also returns related Problems whose representative samples share
 trace IDs, so an Agent can recognize wrapper symptoms without merging or
-discarding facts. The MCP read surface bounds representative breadcrumbs; case
+discarding facts. The MCP read surface bounds representative breadcrumbs and
+redacts signed OSS/S3 URL credentials, including in historical samples; case
 storage and export retain the complete immutable snapshot.
 `cora_export_cases` provides a product-line-scoped, stable paginated export for
 the offline boundary: the first page freezes a high-water case ID, later pages

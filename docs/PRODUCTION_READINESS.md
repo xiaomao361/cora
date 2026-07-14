@@ -56,7 +56,8 @@ Cora 不是零丢失的事件总线，也不是承诺发现全部故障的监控
 当前本地实现已完成，并由官方 MCP Go client 端到端回归；仍需在真实 canary 中验收。
 
 - Server 同进程提供受 bearer 保护的 Streamable HTTP MCP；
-- `cora_list_attention` 返回“现在可能值得关注”的问题，而不是全部历史 Problem；
+- `cora_list_attention` 返回“现在可能值得关注”的问题，而不是全部历史 Problem；其中
+  `acknowledged + handled=false` 继续可见，直到后续 outcome 将其处理完成；
 - `cora_get_problem` 返回代表样本、趋势、节点和已有 case；
 - `cora_record_outcome` 回写真问题、是否处理、根因、动作，并生成不可变产品线 case；
 - Problem 至少支持 `new / acknowledged / resolved / recurring`，避免重复打扰。

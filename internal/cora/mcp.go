@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/claracore/cora/internal/buildinfo"
+	"github.com/claracore/cora/internal/sanitize"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -67,7 +68,7 @@ func NewMCPHandler(store *Store) http.Handler {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "cora", Version: buildinfo.Current().Version}, nil)
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "cora_list_attention",
-		Description: "List current new or recurring Cora problems for one explicit product line.",
+		Description: "List current new, acknowledged-but-unhandled, or recurring Cora problems for one explicit product line.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input listAttentionInput) (*mcpsdk.CallToolResult, listAttentionOutput, error) {
 		items, err := store.CurrentAttention(ctx, input.ProductLine, input.Limit)
 		return nil, listAttentionOutput{Attention: items}, err
@@ -132,7 +133,12 @@ func boundProblemForMCP(problem Problem) Problem {
 func boundSampleForMCP(sample string) string {
 	var event Event
 	if err := json.Unmarshal([]byte(sample), &event); err != nil {
-		return sample
+		return sanitize.RedactSignedURLCredentials(sample)
+	}
+	event.Message = sanitize.RedactSignedURLCredentials(event.Message)
+	event.Stacktrace = sanitize.RedactSignedURLCredentials(event.Stacktrace)
+	for key, value := range event.Labels {
+		event.Labels[key] = sanitize.RedactSignedURLCredentials(value)
 	}
 	if len(event.Breadcrumbs) > mcpBreadcrumbLimit {
 		bounded := make([]Breadcrumb, 0, mcpBreadcrumbLimit)
@@ -141,6 +147,9 @@ func boundSampleForMCP(sample string) string {
 		event.Breadcrumbs = bounded
 	}
 	for index := range event.Breadcrumbs {
+		event.Breadcrumbs[index].Message = sanitize.RedactSignedURLCredentials(
+			event.Breadcrumbs[index].Message,
+		)
 		event.Breadcrumbs[index].Message = truncateMCPText(
 			event.Breadcrumbs[index].Message,
 			mcpBreadcrumbMessageBytes,

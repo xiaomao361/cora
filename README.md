@@ -25,7 +25,8 @@ business-development participation that is not currently available.
 - Promtail-style YAML for both Server and multi-target Agent processes.
 - Production Logback pattern parsing and multiline Java stacktraces.
 - Per-target bounded pre-error breadcrumbs: trace-first, thread fallback.
-- Upload-time redaction for credential keys, phone numbers, and identity numbers.
+- Upload-time redaction for credential keys, signed OSS/S3 URL query credentials,
+  phone numbers, and identity numbers.
 - Bearer-token protection for Server `/v1/*` APIs; `/healthz` remains public on
   the private listener.
 - Durable atomic positions; rename and copy-truncate rotation handling.
@@ -39,14 +40,16 @@ business-development participation that is not currently available.
 - SQLite schema migrations, Problems, trends, node trends, and Cora decisions.
 - Product-line isolation and a versioned `gbjk-zhifu` Cora Pack with 130
   reviewed rules.
-- Problem lifecycle states: `new`, `acknowledged`, `resolved`, and `recurring`.
+- Problem lifecycle states: `new`, `acknowledged`, `resolved`, and `recurring`;
+  acknowledged-but-unhandled Problems remain in the current attention queue.
 - Bearer-protected `/mcp` with `cora_list_attention`, `cora_get_problem`,
   `cora_record_outcome`, and stable paginated `cora_export_cases`; outcome
   writes preserve an immutable context snapshot and exports freeze a high-water
   case ID for reproducible local snapshots.
 - Problem detail relates representative samples that share trace IDs across
-  services and bounds MCP breadcrumbs while preserving full stored and exported
-  case snapshots.
+  services, bounds MCP breadcrumbs, and redacts historical signed URL
+  credentials at read time while preserving full stored and exported case
+  snapshots.
 - Server `/healthz`; Agent `/healthz` and `/readyz` in YAML mode.
 - Server `/readyz` verifies SQLite reachability and unrecovered write failure;
   Agent readiness reports per-target readability, worker state, delivery
@@ -119,7 +122,7 @@ git diff --check
 After committing a release boundary, build identified Linux artifacts with:
 
 ```sh
-deploy/scripts/build-release.sh v0.1.0-rc3
+deploy/scripts/build-release.sh v0.1.0-rc4
 ```
 
 Run the reproducible Cora Pack shadow evaluation:

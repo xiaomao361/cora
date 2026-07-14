@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/claracore/cora/internal/cora"
+	"github.com/claracore/cora/internal/sanitize"
 )
 
 var (
@@ -39,6 +40,7 @@ func redactEvent(event cora.Event) cora.Event {
 }
 
 func redactText(value string) string {
+	value = sanitize.RedactSignedURLCredentials(value)
 	value = sensitiveKeyPattern.ReplaceAllString(value, `${1}[REDACTED]`)
 	value = redactMatches(value, identityPattern, "[REDACTED_ID]", func(start, end int) bool {
 		return (start == 0 || !asciiDigit(value[start-1])) &&

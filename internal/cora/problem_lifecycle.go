@@ -101,8 +101,8 @@ func (s *Store) CurrentAttention(ctx context.Context, productLine string, limit 
 		FROM problems p
 		JOIN cora_decisions d ON d.product_line = p.product_line AND d.service = p.service
 		 AND d.fingerprint = p.fingerprint
-		WHERE p.product_line = ? AND p.state IN ('new', 'recurring') AND d.decision != 'ignore'
-		ORDER BY CASE p.state WHEN 'recurring' THEN 0 ELSE 1 END,
+		WHERE p.product_line = ? AND p.state IN ('new', 'acknowledged', 'recurring') AND d.decision != 'ignore'
+		ORDER BY CASE p.state WHEN 'recurring' THEN 0 WHEN 'new' THEN 1 ELSE 2 END,
 		         CASE d.decision WHEN 'attention' THEN 0 ELSE 1 END,
 		         p.last_seen DESC
 		LIMIT ?`, productLine, limit)

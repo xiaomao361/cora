@@ -148,7 +148,7 @@ func TestAgentAttachesBoundedBreadcrumbsAndRedactsBeforeUpload(t *testing.T) {
 
 	directory := t.TempDir()
 	logPath := filepath.Join(directory, "all.log")
-	contents := "2026-07-13 14:30:10.000 trace_id: trace-a [worker-1] INFO  com.example.OrderService - [load,40] - Authorization: Bearer crumb-secret phone=13800138000\n" +
+	contents := "2026-07-13 14:30:10.000 trace_id: trace-a [worker-1] INFO  com.example.OrderService - [load,40] - Authorization: Bearer crumb-secret phone=13800138000 url=https://bucket.oss.example/a?OSSAccessKeyId=oss-key&Expires=1720000000&Signature=oss-signature\n" +
 		"2026-07-13 14:30:11.000 trace_id: trace-b [worker-1] INFO  com.example.OrderService - [load,41] - other-trace-must-not-attach\n" +
 		"2026-07-13 14:30:12.000 trace_id: trace-a [worker-1] ERROR com.example.OrderService - [submit,42] - token=event-secret id=11010519491231002X\n" +
 		"java.lang.IllegalStateException: password=stack-secret\n\tat com.example.OrderService.submit(OrderService.java:42)\n"
@@ -182,7 +182,7 @@ func TestAgentAttachesBoundedBreadcrumbsAndRedactsBeforeUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	for _, secret := range []string{"crumb-secret", "13800138000", "other-trace-must-not-attach", "event-secret", "11010519491231002X", "stack-secret", "label-secret"} {
+	for _, secret := range []string{"crumb-secret", "13800138000", "other-trace-must-not-attach", "event-secret", "11010519491231002X", "stack-secret", "label-secret", "oss-key", "1720000000", "oss-signature"} {
 		if strings.Contains(text, secret) {
 			t.Fatalf("secret or wrong-trace context %q leaked in %s", secret, text)
 		}
