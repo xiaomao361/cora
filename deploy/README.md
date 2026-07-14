@@ -4,23 +4,22 @@ This is the controlled canary path for one Cora Server and one Cora Agent.
 Replace the example private IP, node identity, service, and log path before use.
 Do not expose Cora Server on a public interface.
 
-## Release layout
+## Flat runtime layout
 
 ```text
-/home/cora/releases/<release>/cora-server
-/home/cora/releases/<release>/cora-agent
-/home/cora/releases/<release>/cora-canary
-/home/cora/current -> /home/cora/releases/<release>
-/home/cora/config/auth.token
-/home/cora/config/agent.yml
-/home/cora/data/server/cora.db
-/home/cora/data/agent/positions.json
-/home/cora/logs/
-/home/cora/backups/
+/home/cora/cora-server
+/home/cora/cora-agent
+/home/cora/cora-canary
+/home/cora/auth.token
+/home/cora/agent.yml
+/home/cora/cora.db
+/home/cora/positions.json
+/home/cora/cora-server.log
+/home/cora/cora-agent.log
 ```
 
 Run Server and Agent as a dedicated `cora` user. The Agent also needs read
-permission for each configured application log. Keep `/home/cora/config/auth.token`
+permission for each configured application log. Keep `/home/cora/auth.token`
 owned by that user with mode `0600`; distribute the same file to the Server and
 authorized Agent hosts over the existing secure administration channel.
 
@@ -28,16 +27,10 @@ Generate a token without printing it:
 
 ```sh
 umask 077
-install -d -m 0755 /home/cora/releases
-install -d -o cora -g cora -m 0750 \
-  /home/cora/config \
-  /home/cora/data/server \
-  /home/cora/data/agent \
-  /home/cora/logs \
-  /home/cora/backups
-openssl rand -hex 32 > /home/cora/config/auth.token
-chown cora:cora /home/cora/config/auth.token
-chmod 0600 /home/cora/config/auth.token
+install -d -o cora -g cora -m 0750 /home/cora
+openssl rand -hex 32 > /home/cora/auth.token
+chown cora:cora /home/cora/auth.token
+chmod 0600 /home/cora/auth.token
 ```
 
 ## Build identified Linux amd64 binaries
@@ -53,8 +46,8 @@ deploy/scripts/build-release.sh v0.1.0
 cat dist/v0.1.0/SHA256SUMS
 ```
 
-Copy the binaries into a new immutable release directory, then update the
-`/home/cora/current` symlink. Do not overwrite the previous release.
+Copy the three binaries directly into `/home/cora`. Before replacement, keep a
+`.previous` copy of the currently running binary for simple rollback.
 
 ## Server boundary
 
@@ -72,7 +65,7 @@ credential facility rather than checking it into an MCP configuration file.
 
 ## Agent boundary
 
-Copy `config/cora-agent-canary.example.yml` to `/home/cora/config/agent.yml` and replace:
+Copy `config/cora-agent-canary.example.yml` to `/home/cora/agent.yml` and replace:
 
 - Server private address;
 - `product_line`, `app`, `node`, and `deployment_group`;
@@ -82,15 +75,16 @@ Keep `agent.start_at: end` for the first canary so deployment does not replay
 historical logs. Validate before Supervisor starts it:
 
 ```sh
-/home/cora/current/cora-agent -config.file=/home/cora/config/agent.yml -check-config
+/home/cora/cora-agent -config.file=/home/cora/agent.yml -check-config
 ```
 
 ## Install and operate with Supervisor
 
-Copy only the relevant program file to the host's Supervisor include directory,
-then run:
+Keep `cora-server.conf` or `cora-agent.conf` directly in `/home/cora`, and link
+the relevant file into the host's Supervisor include directory. Then run:
 
 ```sh
+ln -s /home/cora/cora-server.conf /etc/supervisor/conf.d/cora-server.conf
 supervisorctl reread
 supervisorctl update
 supervisorctl status cora-server
@@ -106,9 +100,9 @@ verified consistent backup with the currently deployed binary:
 
 ```sh
 deploy/scripts/backup-server.sh \
-  /home/cora/current/cora-server \
-  /home/cora/data/server/cora.db \
-  /home/cora/backups/server
+  /home/cora/cora-server \
+  /home/cora/cora.db \
+  /home/cora
 ```
 
 Before replacing an Agent, stop it briefly and back up its acknowledged offsets:
@@ -116,8 +110,8 @@ Before replacing an Agent, stop it briefly and back up its acknowledged offsets:
 ```sh
 supervisorctl stop cora-agent
 deploy/scripts/backup-positions.sh \
-  /home/cora/data/agent/positions.json \
-  /home/cora/backups/agent
+  /home/cora/positions.json \
+  /home/cora
 supervisorctl start cora-agent
 ```
 
@@ -127,9 +121,9 @@ Canary liveness and readiness:
 curl --fail http://127.0.0.1:9088/readyz
 curl --fail http://10.0.0.10:8080/healthz
 
-/home/cora/current/cora-canary \
+/home/cora/cora-canary \
   -server-url=http://10.0.0.10:8080 \
-  -auth-token-file=/home/cora/config/auth.token \
+  -auth-token-file=/home/cora/auth.token \
   -product-line=gbjk-zhifu
 ```
 
@@ -148,22 +142,22 @@ The backup command uses SQLite `VACUUM INTO` and immediately runs
 
 ```sh
 supervisorctl stop cora-server
-mv /home/cora/data/server/cora.db /home/cora/data/server/cora.db.pre-restore
-cp /home/cora/backups/server/<timestamp>/cora.db /home/cora/data/server/cora.db
-chown cora:cora /home/cora/data/server/cora.db
-chmod 0600 /home/cora/data/server/cora.db
-/home/cora/current/cora-server -db=/home/cora/data/server/cora.db -check-db
+mv /home/cora/cora.db /home/cora/cora.db.pre-restore
+cp /home/cora/cora-<timestamp>.db /home/cora/cora.db
+chown cora:cora /home/cora/cora.db
+chmod 0600 /home/cora/cora.db
+/home/cora/cora-server -db=/home/cora/cora.db -check-db
 supervisorctl start cora-server
-/home/cora/current/cora-canary \
+/home/cora/cora-canary \
   -server-url=http://10.0.0.10:8080 \
-  -auth-token-file=/home/cora/config/auth.token \
+  -auth-token-file=/home/cora/auth.token \
   -product-line=gbjk-zhifu
 ```
 
-Rollback by stopping the program, pointing `/home/cora/current` at the previous
-immutable release, restoring the matching database backup if the schema changed,
-and starting the program again. Preserve the failed release, logs, database,
-and positions until the incident is understood.
+Rollback by stopping the program, restoring its `.previous` binary and the
+matching flat database backup if the schema changed, then starting it again.
+Preserve the failed binary, logs, database, and positions until the incident is
+understood.
 
 ## 72-hour production test gate
 
