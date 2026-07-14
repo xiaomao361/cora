@@ -1,8 +1,11 @@
-module github.com/claracore/clarion
+module github.com/claracore/cora
 
 go 1.26
 
-require modernc.org/sqlite v1.46.1
+require (
+	gopkg.in/yaml.v3 v3.0.1
+	modernc.org/sqlite v1.46.1
+)
 
 require (
 	github.com/dustin/go-humanize v1.0.1 // indirect

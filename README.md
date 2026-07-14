@@ -1,54 +1,77 @@
-# Clarion
+# Cora
 
-Clarion is an agent-first error attention framework. It receives backend error
-events, deterministically groups them into candidate problems, and keeps only
-counts plus representative samples so downstream agents reason about problems
-rather than raw error floods.
+Cora is a lightweight, agent-first error observability system for teams that
+cannot justify the operational cost of Sentry or a full APM stack. It tails
+existing application logs without changing business services, collapses error
+floods into Problems, and applies explainable product-line decisions.
 
-This repository is the first executable slice of the design in
-`ClaraCore/seeds/lightweight-error-attention-platform.md`.
+## Components
 
-## Current vertical slice
+- **Cora Agent** runs once per application host, follows many Logback files,
+  reconstructs multiline ERROR events, checkpoints acknowledged offsets, and
+  sends bounded batches over the internal network.
+- **Cora Server** receives events, fingerprints and aggregates them, persists
+  Problems, trends, and decisions in SQLite, and exposes HTTP query APIs.
+- **Cora Core** is the deterministic decision engine embedded in the Server.
+  It loads versioned product-line experience from a **Cora Pack**.
 
-- `POST /v1/events:batch` receives error events.
-- Java-style exceptions are fingerprinted from exception type, application
-  stack frames, and logger name.
-- A bounded in-memory window collapses repeated events before SQLite writes.
-- Each flush stores one problem update and one trend point per active
-  product-line/fingerprint, plus first and latest representative samples.
-- `GET /v1/problems?product_line=...` exposes candidate problems.
-- `GET /v1/trends?product_line=...&fingerprint=...` exposes window counts.
-- `GET /healthz` reports process health plus pending, dropped, flush-count,
-  failure, event-count, and latest flush-duration metrics.
-- `integrations/logback` provides the first Java production-shaped input: a
-  bounded, asynchronous Logback ERROR appender with batching and hard timeouts.
+The current production path is Agent-only. Java SDK and Logback Appender code
+were intentionally removed because deploying application dependencies requires
+business-development participation that is not currently available.
 
-Not implemented yet: Cora judgment, MCP, feedback cases, webhooks, and the debug
-UI.
+## Current capabilities
 
-## Run
+- Promtail-style YAML with multiple explicit log targets per host.
+- Production Logback pattern parsing and multiline Java stacktraces.
+- Per-target bounded pre-error breadcrumbs: trace-first, thread fallback.
+- Upload-time redaction for credential keys, phone numbers, and identity numbers.
+- Bearer-token protection for Server `/v1/*` APIs; `/healthz` remains public on
+  the private listener.
+- Durable atomic positions; rename and copy-truncate rotation handling.
+- Retry on connection failures, HTTP 429, and HTTP 5xx; positions advance only
+  after a 2xx response.
+- Count- and byte-bounded events and batches.
+- Deterministic Java fingerprints and bounded in-memory aggregation.
+- Chronological first/latest samples even when historical events arrive
+  newest-first.
+- Service-scoped Problem identity plus cumulative and per-window node facts.
+- SQLite schema migrations, Problems, trends, node trends, and Cora decisions.
+- Product-line isolation and a versioned `gbjk-zhifu` Cora Pack with 130
+  reviewed rules.
+- Server `/healthz`; Agent `/healthz` and `/readyz` in YAML mode.
+
+Not implemented yet: event-ID deduplication, alerts, MCP, or a web UI. The
+current Cora Core still loads an embedded static Pack at process start; an
+iterative candidate/evaluation/promotion loop is not implemented yet.
+
+## Run locally
+
+Start the Server:
 
 ```sh
-go run ./cmd/clarion -addr :8080 -db ./clarion.db
+go run ./cmd/cora-server -allow-unauthenticated -db ./cora.db
 ```
 
-The default aggregation window is 10 seconds with at most 10,000 active
-fingerprints. Configure these with `-flush-interval` and `-max-active`. When the
-window is full, Clarion continues counting fingerprints already present but
-drops newly seen fingerprints, increments `dropped_events`, and never blocks an
-ingesting client on SQLite. A process crash can lose the current unflushed
-window; SIGINT and SIGTERM trigger a final flush with a five-second timeout.
-
-SQLite schema changes are applied at startup using `PRAGMA user_version`.
-Existing unversioned Clarion databases are upgraded in place, migrations run in
-transactions, and Clarion refuses to open a database created by a newer schema
-version.
+Validate and start a multi-target Agent:
 
 ```sh
-curl -X POST http://localhost:8080/v1/events:batch \
-  -H 'content-type: application/json' \
-  -d '{"events":[{"product_line":"demo","service":"orders","environment":"prod","logger":"com.example.Order","exception_type":"java.lang.OutOfMemoryError","message":"Java heap space","stacktrace":"at com.example.Order.run(Order.java:42)"}]}'
+go run ./cmd/cora-agent \
+  -config.file config/cora-agent-qikang.example.yml \
+  -check-config
+
+go run ./cmd/cora-agent \
+  -config.file config/cora-agent-qikang.example.yml
 ```
+
+The ingest and query APIs are:
+
+- `POST /v1/events:batch`
+- `GET /v1/problems?product_line=<line>`
+- `GET /v1/attention?product_line=<line>`
+- `GET /v1/trends?product_line=<line>&service=<service>&fingerprint=<fingerprint>`
+- `GET /v1/node-occurrences?product_line=<line>&service=<service>&fingerprint=<fingerprint>`
+- `GET /v1/node-trends?product_line=<line>&service=<service>&fingerprint=<fingerprint>[&node=<node>]`
+- `GET /healthz`
 
 ## Validate
 
@@ -56,11 +79,29 @@ curl -X POST http://localhost:8080/v1/events:batch \
 go test ./...
 go test -race ./...
 go vet ./...
+git diff --check
 ```
 
-Reproducible aggregation benchmarks and the current Apple M4 baseline are in
-[`docs/PERFORMANCE_BASELINE.md`](docs/PERFORMANCE_BASELINE.md).
+Run the reproducible Cora Pack shadow evaluation:
 
-The Logback appender build, configuration, failure semantics, counters, and
-end-to-end example are documented in
-[`integrations/logback/README.md`](integrations/logback/README.md).
+```sh
+go run ./cmd/cora-eval \
+  -input /path/to/cora-evaluation.csv \
+  -product-line gbjk-zhifu \
+  -json reports/cora-shadow-eval/cora-gbjk-v0-baseline.json \
+  -markdown reports/cora-shadow-eval/cora-gbjk-v0-baseline.md
+```
+
+## Documentation
+
+- [`docs/HANDOFF.md`](docs/HANDOFF.md): current truth and next development loop.
+- [`docs/CORA_AGENT_V0.md`](docs/CORA_AGENT_V0.md): Agent configuration,
+  delivery semantics, and Supervisor deployment.
+- [`docs/CORA_V0.md`](docs/CORA_V0.md): Core contract, Cora Pack, and evaluation
+  limits.
+- [`docs/VISION_ALIGNMENT.md`](docs/VISION_ALIGNMENT.md): original vision versus
+  current truth, including the required MCP and case loop.
+- [`deploy/README.md`](deploy/README.md): Linux build, Supervisor canary,
+  backup, and rollback.
+- [`docs/PERFORMANCE_BASELINE.md`](docs/PERFORMANCE_BASELINE.md): reproducible
+  aggregation benchmark.

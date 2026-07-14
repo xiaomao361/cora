@@ -1,4 +1,7 @@
-/clarion
+/cora-server
+/cora-agent
+/cora-eval
+.DS_Store
 *.db
 *.db-shm
 *.db-wal

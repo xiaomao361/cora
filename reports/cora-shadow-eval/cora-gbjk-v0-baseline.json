@@ -1,0 +1,265 @@
+{
+  "schema_version": "cora.shadow-eval.v1",
+  "model": "cora",
+  "model_version": "0.1.0",
+  "product_line": "gbjk-zhifu",
+  "experience_version": "cora-gbjk-v0.1.0",
+  "source_sha256": "6f1de3879fe31bcebf534fa0960b2b6c1d4962c8c26a3005d11ebe648a6cc66d",
+  "data_quality": {
+    "rows": 1404,
+    "columns": 12,
+    "duplicate_ids": 0,
+    "missing_by_column": {
+      "exception": 1403,
+      "trace_id": 32
+    },
+    "label_counts": {
+      "attention": 45,
+      "ignore": 1359
+    },
+    "source_counts": {
+      "file.log": 3,
+      "front.log": 13,
+      "greenpass.log": 2,
+      "health.log": 141,
+      "hut.log": 4,
+      "open.log": 596,
+      "order.log": 92,
+      "payment.log": 534,
+      "statement.log": 19
+    },
+    "parsed_timestamps": 0,
+    "timestamp_coverage": 0,
+    "time_split_available": false,
+    "time_split_unavailable_reason": "timestamps are incomplete or not full dates; row order is not a valid temporal substitute",
+    "lenient_csv_parsing": true,
+    "csv_parse_warning": "parse error on line 377, column 145: bare \" in non-quoted-field"
+  },
+  "row_metrics": {
+    "decision_counts": {
+      "attention": 31,
+      "ignore": 814,
+      "observe": 559
+    },
+    "label_by_decision": {
+      "attention": {
+        "attention": 25,
+        "observe": 20
+      },
+      "ignore": {
+        "attention": 6,
+        "ignore": 814,
+        "observe": 539
+      }
+    },
+    "decided_rows": 845,
+    "coverage": 0.6018518518518519,
+    "agreement_on_decided": 0.9928994082840237,
+    "attention_recall": 0.5555555555555556,
+    "attention_to_ignore": 0,
+    "ignore_to_attention": 6,
+    "unsupported_label_rows": 0,
+    "transition_by_rule": {
+      "attention-\u003eobserve|at_05": 20,
+      "ignore-\u003eattention|at_06": 6,
+      "ignore-\u003eobserve|at_04": 534,
+      "ignore-\u003eobserve|cora.default.unmatched": 5
+    }
+  },
+  "signature_metrics": {
+    "unique": 20,
+    "duplicate_rows": 1384,
+    "duplicate_rate": 0.9857549857549858,
+    "label_conflict_signatures": 1,
+    "decision_conflict_signatures": 1,
+    "stable_signatures": 19,
+    "stable_decided_signatures": 18,
+    "stable_agreement_on_decided": 0.9444444444444444
+  },
+  "rule_conflicts": {
+    "rows_matching_multiple_rules": 1,
+    "max_rules_matched": 2
+  },
+  "redacted_disagreements": [
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "hut.log",
+      "line_number": "75757",
+      "label": "ignore",
+      "decision": "observe",
+      "rule_id": "cora.default.unmatched",
+      "category": "unmatched"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "hut.log",
+      "line_number": "76016",
+      "label": "ignore",
+      "decision": "observe",
+      "rule_id": "cora.default.unmatched",
+      "category": "unmatched"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "642",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "2190",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "8554",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "16051",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "16886",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "18056",
+      "label": "ignore",
+      "decision": "observe",
+      "rule_id": "cora.default.unmatched",
+      "category": "unmatched"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "24503",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "24ea31c37a3471dbb04f26486b9bb3b3",
+      "source_file": "order.log",
+      "line_number": "32124",
+      "label": "ignore",
+      "decision": "attention",
+      "rule_id": "at_06",
+      "category": "理赔核心-案件推送失败"
+    },
+    {
+      "fingerprint": "24ea31c37a3471dbb04f26486b9bb3b3",
+      "source_file": "order.log",
+      "line_number": "32315",
+      "label": "ignore",
+      "decision": "attention",
+      "rule_id": "at_06",
+      "category": "理赔核心-案件推送失败"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "32513",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "24ea31c37a3471dbb04f26486b9bb3b3",
+      "source_file": "order.log",
+      "line_number": "36706",
+      "label": "ignore",
+      "decision": "attention",
+      "rule_id": "at_06",
+      "category": "理赔核心-案件推送失败"
+    },
+    {
+      "fingerprint": "24ea31c37a3471dbb04f26486b9bb3b3",
+      "source_file": "order.log",
+      "line_number": "36897",
+      "label": "ignore",
+      "decision": "attention",
+      "rule_id": "at_06",
+      "category": "理赔核心-案件推送失败"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "37095",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "43784",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "52889",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "57937",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "63078",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    },
+    {
+      "fingerprint": "20ba538d9c3be89264d1b8abb5f03605",
+      "source_file": "order.log",
+      "line_number": "64803",
+      "label": "attention",
+      "decision": "observe",
+      "rule_id": "at_05",
+      "category": "理赔入口-全局异常"
+    }
+  ]
+}

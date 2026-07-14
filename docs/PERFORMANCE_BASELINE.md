@@ -1,4 +1,4 @@
-# Clarion Performance Baseline
+# Cora Performance Baseline
 
 Measured on 2026-07-13 on an Apple M4 (`darwin/arm64`) with the Go version in
 `go.mod`. These numbers are a development baseline, not a production capacity
@@ -7,10 +7,10 @@ claim.
 ## Reproduce
 
 ```sh
-go test ./internal/clarion -run '^$' \
+go test ./internal/cora -run '^$' \
   -bench 'BenchmarkAggregator(Add|Flush)$' \
   -benchmem -benchtime=1s -count=3
-go test -v ./internal/clarion \
+go test -v ./internal/cora \
   -run 'Test(DefaultAggregatorCapacity|FlushSQLWork)'
 ```
 
@@ -40,8 +40,8 @@ event count.
 Keep the current defaults of a 10-second window and 10,000 active fingerprints.
 The measured retained heap and observed process RSS are comfortably below the
 100 MiB target on this machine, and a full 10,000-fingerprint flush completes in
-under 300 ms. Revisit the defaults after the Logback appender supplies realistic
-event shapes and deployment hardware is known.
+under 300 ms. Revisit the defaults after Cora Agent runs on the intended Linux
+hosts with sustained production event shapes.
 
 The main performance concern is allocation churn during a maximum-cardinality
 flush. It is acceptable for the current experimental slice, but should be

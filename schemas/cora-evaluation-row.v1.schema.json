@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-evaluation-row.v1.schema.json",
+  "title": "Cora Evaluation Row v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "occurred_at",
+    "product_line",
+    "service",
+    "environment",
+    "source",
+    "logger",
+    "exception_type",
+    "message",
+    "stacktrace",
+    "label",
+    "review"
+  ],
+  "properties": {
+    "event_id": { "type": "string", "minLength": 1 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "product_line": { "type": "string", "minLength": 1 },
+    "service": { "type": "string", "minLength": 1 },
+    "environment": { "type": "string", "minLength": 1 },
+    "release": { "type": "string" },
+    "source": { "type": "string", "minLength": 1 },
+    "trace_id": { "type": "string" },
+    "labels": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "logger": { "type": "string", "minLength": 1 },
+    "exception_type": { "type": "string", "minLength": 1 },
+    "message": { "type": "string" },
+    "stacktrace": { "type": "string", "minLength": 1 },
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "label": {
+      "type": "string",
+      "enum": ["attention", "observe", "ignore"]
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reviewed_at", "reviewer", "reason"],
+      "properties": {
+        "reviewed_at": { "type": "string", "format": "date-time" },
+        "reviewer": { "type": "string", "minLength": 1 },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

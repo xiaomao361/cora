@@ -1,0 +1,209 @@
+server:
+  http_listen_address: 127.0.0.1
+  http_listen_port: 9088
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/cora-agent/qikang-positions.yml
+
+clients:
+  - url: http://cora.internal:8080/v1/events:batch
+    bearer_token_file: /etc/cora/auth.token
+
+defaults:
+  product_line: qikang-zhifu
+  environment: prod
+  timezone: Asia/Shanghai
+
+agent:
+  start_at: end
+  batch_size: 100
+  batch_wait: 1s
+  poll_interval: 250ms
+  request_timeout: 3s
+  max_retries: 5
+  min_backoff: 250ms
+  max_backoff: 5s
+  max_event_bytes: 262144
+  max_batch_bytes: 1572864
+
+scrape_configs:
+  - job_name: gb-auth_log_push
+    static_configs:
+      - labels:
+          app: gb-auth
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-auth/supervisor.log
+
+  - job_name: gb-front_log_push
+    static_configs:
+      - labels:
+          app: gb-front
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-front/supervisor.log
+
+  - job_name: gb-gateway_log_push
+    static_configs:
+      - labels:
+          app: gb-gateway
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-gateway/supervisor.log
+
+  - job_name: gb-contract_log_push
+    static_configs:
+      - labels:
+          app: gb-contract
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-contract/supervisor.log
+
+  - job_name: gb-file_log_push
+    static_configs:
+      - labels:
+          app: gb-file
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-file/supervisor.log
+
+  - job_name: gb-open_log_push
+    static_configs:
+      - labels:
+          app: gb-open
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-open/supervisor.log
+
+  - job_name: gb-pigeon_log_push
+    static_configs:
+      - labels:
+          app: gb-pigeon
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-pigeon/supervisor.log
+
+  - job_name: gb-statement_log_push
+    static_configs:
+      - labels:
+          app: gb-statement
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-statement/supervisor.log
+
+  - job_name: gb-system_log_push
+    static_configs:
+      - labels:
+          app: gb-system
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-system/supervisor.log
+
+  - job_name: gb-tenant_log_push
+    static_configs:
+      - labels:
+          app: gb-tenant
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-tenant/supervisor.log
+
+  - job_name: gb-customer_log_push
+    static_configs:
+      - labels:
+          app: gb-customer
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-customer/supervisor.log
+
+  - job_name: gb-greenpass_log_push
+    static_configs:
+      - labels:
+          app: gb-greenpass
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-greenpass/supervisor.log
+
+  - job_name: gb-health_log_push
+    static_configs:
+      - labels:
+          app: gb-health
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-health/supervisor.log
+
+  - job_name: gb-hut_log_push
+    static_configs:
+      - labels:
+          app: gb-hut
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-hut/supervisor.log
+
+  - job_name: gb-merchant_log_push
+    static_configs:
+      - labels:
+          app: gb-merchant
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-merchant/supervisor.log
+
+  - job_name: gb-order_log_push
+    static_configs:
+      - labels:
+          app: gb-order
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-order/supervisor.log
+
+  - job_name: gb-payment_log_push
+    static_configs:
+      - labels:
+          app: gb-payment
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-payment/supervisor.log
+
+  - job_name: gb-policy_log_push
+    static_configs:
+      - labels:
+          app: gb-policy
+          server: backup
+          ip: 172.16.0.229
+          env: prod
+          group: platform
+          __path__: /home/qikang/data/gb-policy/supervisor.log

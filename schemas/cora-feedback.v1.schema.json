@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-feedback.v1.schema.json",
+  "title": "Cora Feedback v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "feedback_id",
+    "recorded_at",
+    "product_line",
+    "fingerprint",
+    "prior_decision",
+    "outcome",
+    "actor",
+    "reason",
+    "source"
+  ],
+  "properties": {
+    "feedback_id": { "type": "string", "minLength": 1 },
+    "recorded_at": { "type": "string", "format": "date-time" },
+    "product_line": { "type": "string", "minLength": 1 },
+    "problem_id": { "type": "integer", "minimum": 1 },
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "prior_decision": {
+      "type": "string",
+      "enum": ["attention", "observe", "ignore"]
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "confirmed_attention",
+        "expected_noise",
+        "needs_observation",
+        "missed_attention"
+      ]
+    },
+    "actor": { "type": "string", "minLength": 1 },
+    "reason": { "type": "string", "minLength": 1 },
+    "source": { "type": "string", "enum": ["human_review", "incident", "automation"] }
+  }
+}

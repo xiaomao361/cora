@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-decision-request.v1.schema.json",
+  "title": "Cora Decision Request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event", "fingerprint", "occurrence_count", "first_occurrence"],
+  "properties": {
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_line", "service", "environment", "logger", "exception_type", "message", "stacktrace"],
+      "properties": {
+        "product_line": { "type": "string", "minLength": 1 },
+        "service": { "type": "string", "minLength": 1 },
+        "environment": { "type": "string" },
+        "release": { "type": "string" },
+        "source": { "type": "string" },
+        "trace_id": { "type": "string" },
+        "labels": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "logger": { "type": "string" },
+        "exception_type": { "type": "string", "minLength": 1 },
+        "message": { "type": "string" },
+        "stacktrace": { "type": "string" },
+        "occurred_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "occurrence_count": { "type": "integer", "minimum": 1 },
+    "first_occurrence": { "type": "boolean" }
+  }
+}

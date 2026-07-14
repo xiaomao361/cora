@@ -1,0 +1,1694 @@
+{
+  "schema_version": "cora.experience-pack.v1",
+  "product_line": "gbjk-zhifu",
+  "version": "cora-gbjk-v0.1.0",
+  "source": {
+    "type": "validated_rule_baseline",
+    "reviewed_at": "2026-07-13"
+  },
+  "default_decision": "observe",
+  "priority_order": [
+    "attention",
+    "observe",
+    "ignore"
+  ],
+  "rules": [
+    {
+      "id": "ig_01",
+      "decision": "ignore",
+      "category": "业务校验-保单责任不存在",
+      "reason": "路由找不到保单责任信息，无异常栈，大量重复",
+      "match": {
+        "class": "RouterServiceImpl",
+        "method": "route"
+      }
+    },
+    {
+      "id": "ig_02",
+      "decision": "ignore",
+      "category": "三方数据-健康档案员工不存在",
+      "reason": "健康档案推送时员工不存在",
+      "match": {
+        "class": "HealthPsychologyServiceImpl"
+      }
+    },
+    {
+      "id": "ig_03",
+      "decision": "ignore",
+      "category": "客户端-JWT异常",
+      "reason": "JWT过期或无效，客户端重新登录即可",
+      "match": {
+        "class": "RouterServiceImpl",
+        "method": "checkAccess"
+      }
+    },
+    {
+      "id": "ig_04",
+      "decision": "ignore",
+      "category": "客户端-Token异常",
+      "reason": "Token签名不匹配或过期，客户端问题",
+      "match": {
+        "class": "TokenUserService",
+        "method": "getDataScope"
+      }
+    },
+    {
+      "id": "ig_05",
+      "decision": "ignore",
+      "category": "用户输入-支付密码错误",
+      "reason": "用户输错支付密码",
+      "match": {
+        "class": "TradeOrdersServiceImpl",
+        "method": "validatePayPwdRetry"
+      }
+    },
+    {
+      "id": "ig_06",
+      "decision": "ignore",
+      "category": "业务校验-商品不存在",
+      "reason": "商品信息同步延迟",
+      "match": {
+        "class": "OnlineOrderSourceExecuteServiceImpl",
+        "method": "verifyPrePayOrder"
+      }
+    },
+    {
+      "id": "ig_07",
+      "decision": "ignore",
+      "category": "三方不可用-订单回调失败",
+      "reason": "订单回调三方服务不可达",
+      "match": {
+        "class": "OrderNotifyService",
+        "method": "handleNotify"
+      }
+    },
+    {
+      "id": "ig_08",
+      "decision": "ignore",
+      "category": "状态机-重复取消",
+      "reason": "订单已取消后定时任务再次取消",
+      "match": {
+        "class": "BaseStateMachine",
+        "message_contains": [
+          "状态机转换失败"
+        ]
+      }
+    },
+    {
+      "id": "ig_09",
+      "decision": "ignore",
+      "category": "状态机-执行异常",
+      "reason": "状态机转换失败的后续异常",
+      "match": {
+        "class": "OrderExecuteService",
+        "message_contains": [
+          "状态机转换失败"
+        ]
+      }
+    },
+    {
+      "id": "ig_10",
+      "decision": "ignore",
+      "category": "业务配置-TPA已禁用",
+      "reason": "理赔结算TPA功能已禁用",
+      "match": {
+        "class": "SettleClaimCasesServiceImpl",
+        "message_contains": [
+          "结算推送失败",
+          "结算深度失败"
+        ]
+      }
+    },
+    {
+      "id": "ig_11",
+      "decision": "ignore",
+      "category": "启动-端口占用",
+      "reason": "xxl-job端口被占用",
+      "match": {
+        "class": "EmbedServer",
+        "message_contains": [
+          "xxl-job remoting server error"
+        ]
+      }
+    },
+    {
+      "id": "ig_12",
+      "decision": "ignore",
+      "category": "业务校验-收款单金额超限",
+      "reason": "财务对账金额校验失败或导入异常",
+      "match": {
+        "class_contains": [
+          "ReceiptDetailServiceImpl",
+          "ReceiptServiceImpl"
+        ],
+        "message_contains": [
+          "收款单",
+          "批量导入"
+        ]
+      }
+    },
+    {
+      "id": "ig_13",
+      "decision": "ignore",
+      "category": "客户端-登录注册异常",
+      "reason": "用户登录、注册、设置密码等客户端操作失败",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "message_contains": [
+          "/login/",
+          "/member/setPayPassword"
+        ]
+      }
+    },
+    {
+      "id": "ig_14",
+      "decision": "ignore",
+      "category": "三方不可用-文件上传失败",
+      "reason": "文件上传服务不可达",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "message_contains": [
+          "/inner/uploadFileInner"
+        ]
+      }
+    },
+    {
+      "id": "ig_15",
+      "decision": "ignore",
+      "category": "网关鉴权-未授权请求",
+      "reason": "网关未授权请求与探测流量，不作为运维关注主目标",
+      "match": {
+        "class": "ServletUtil",
+        "method": "unauthorizedResponse",
+        "message_contains": [
+          "[鉴权异常处理]请求路径:"
+        ]
+      }
+    },
+    {
+      "id": "ig_16",
+      "decision": "ignore",
+      "category": "认证失败-用户凭证问题",
+      "reason": "认证失败属于用户凭证或登录问题，默认不作为运维异常",
+      "match": {
+        "class": "AuthenticationBaseProvider",
+        "method": "authenticate",
+        "message_contains": [
+          "problem in authenticate"
+        ]
+      }
+    },
+    {
+      "id": "ig_17",
+      "decision": "ignore",
+      "category": "三方回调-调试响应噪音",
+      "reason": "Forest 调试响应行是下游失败的伴生噪音，不单独关注",
+      "match": {
+        "class": "DefaultLogHandler",
+        "method": "info",
+        "message_contains": [
+          "[Forest] Response: [Network Error]"
+        ]
+      }
+    },
+    {
+      "id": "ig_18",
+      "decision": "ignore",
+      "category": "医保业务-无责任数据",
+      "reason": "医保责任数据缺失属于业务数据问题，默认忽略",
+      "match": {
+        "class": "YbReimburseTaskServiceImpl",
+        "method": "getValidCardYbaVo",
+        "message_contains": [
+          "无任何公账责任数据"
+        ]
+      }
+    },
+    {
+      "id": "ig_19",
+      "decision": "ignore",
+      "category": "前端账号-换绑手机号异常",
+      "reason": "换绑手机号接口异常默认按用户操作或前端流程异常处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/member/replacePhone"
+        ]
+      }
+    },
+    {
+      "id": "ig_20",
+      "decision": "ignore",
+      "category": "前端账号-手机号验证码异常",
+      "reason": "手机号验证码相关接口异常默认按前端或用户流程问题处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/member/getCustomerPhoneCode",
+          "/member/getPhoneCode",
+          "/member/verificationReplacePhoneCode"
+        ]
+      }
+    },
+    {
+      "id": "ig_21",
+      "decision": "ignore",
+      "category": "订单创建-断言异常",
+      "reason": "提交创建订单断言异常当前按业务噪声处理，不进入运维关注面",
+      "match": {
+        "class": "TradeOrdersServiceImpl",
+        "method": "submitUserOrder",
+        "message_contains": [
+          "断言异常"
+        ]
+      }
+    },
+    {
+      "id": "ig_22",
+      "decision": "ignore",
+      "category": "现金支付-断言异常",
+      "reason": "现金支付断言异常当前按业务噪声处理",
+      "match": {
+        "class": "UserOrderServiceImpl",
+        "method": "payCash",
+        "message_contains": [
+          "断言异常"
+        ]
+      }
+    },
+    {
+      "id": "ig_23",
+      "decision": "ignore",
+      "category": "额度试算-断言异常",
+      "reason": "额度试算断言异常当前按业务噪声处理",
+      "match": {
+        "class": "UserOrderServiceImpl",
+        "method": "defaultPolicyQuotaTrial",
+        "message_contains": [
+          "断言异常"
+        ]
+      }
+    },
+    {
+      "id": "ig_24",
+      "decision": "ignore",
+      "category": "订单MQ发送日志",
+      "reason": "订单MQ发送开始/成功日志误入异常集合，直接忽略",
+      "match": {
+        "class": "TradeOrdersServiceImpl",
+        "method": "sendOrderMq",
+        "message_contains": [
+          "订单创建发送MQ消息"
+        ]
+      }
+    },
+    {
+      "id": "ig_25",
+      "decision": "ignore",
+      "category": "事务日志切面输出",
+      "reason": "事务日志切面输出属于调试/审计信息，不作为运维异常",
+      "match": {
+        "class": "TransactionLogAspect",
+        "message_contains": [
+          "事务日志切面"
+        ]
+      }
+    },
+    {
+      "id": "ig_26",
+      "decision": "ignore",
+      "category": "审计SQL调试日志",
+      "reason": "系统审计SQL调试输出不作为异常处理",
+      "match": {
+        "class": "S.insert",
+        "method": "debug",
+        "message_contains": [
+          "==> Parameters:"
+        ]
+      }
+    },
+    {
+      "id": "ig_27",
+      "decision": "ignore",
+      "category": "订单更新SQL调试日志",
+      "reason": "订单更新SQL调试输出不作为异常处理",
+      "match": {
+        "class": "T.updateById",
+        "method": "debug",
+        "message_contains": [
+          "==> Parameters:"
+        ]
+      }
+    },
+    {
+      "id": "ig_28",
+      "decision": "ignore",
+      "category": "网关响应式丢弃噪音",
+      "reason": "Reactor onErrorDropped 默认噪音，默认忽略",
+      "match": {
+        "class": "Operators",
+        "method": "error",
+        "message_contains": [
+          "onErrorDropped"
+        ]
+      }
+    },
+    {
+      "id": "ig_29",
+      "decision": "ignore",
+      "category": "心理报告推送异常",
+      "reason": "心理报告推送路径异常当前按低优先级业务问题处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/psychologyReport/addPsychologyReport"
+        ]
+      }
+    },
+    {
+      "id": "ig_30",
+      "decision": "ignore",
+      "category": "用户卡查询异常",
+      "reason": "用户卡与扣减明细查询路径异常当前按低优先级业务问题处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/userCard/openGetUserValidCardPolicyList",
+          "/inner/cardDetail/deductionAmount"
+        ]
+      }
+    },
+    {
+      "id": "ig_31",
+      "decision": "ignore",
+      "category": "商品详情查询异常",
+      "reason": "商品详情查询接口异常当前按低优先级业务问题处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/goods/queryGoodsDetailsList"
+        ]
+      }
+    },
+    {
+      "id": "ig_32",
+      "decision": "ignore",
+      "category": "工单列表查询异常",
+      "reason": "工单列表与管理页查询异常当前按低优先级业务问题处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/workOrder/findWorkOrderPageRecord",
+          "/admin/workOrder"
+        ]
+      }
+    },
+    {
+      "id": "ig_33",
+      "decision": "ignore",
+      "category": "商户理赔统计查询异常",
+      "reason": "商户理赔统计查询异常当前按低优先级业务问题处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/merchantClaim/settleClaimStatistics"
+        ]
+      }
+    },
+    {
+      "id": "ig_34",
+      "decision": "ignore",
+      "category": "实名更新员工异常",
+      "reason": "实名更新员工失败当前按业务数据问题处理",
+      "match": {
+        "class": "MemberAuthServiceImpl",
+        "method": "updateEmployee",
+        "message_contains": [
+          "用户实名记录后更新员工失败"
+        ]
+      }
+    },
+    {
+      "id": "ig_35",
+      "decision": "ignore",
+      "category": "AES解密失败",
+      "reason": "AES 解密失败当前按调用侧或数据问题处理",
+      "match": {
+        "class": "AESEncryptionUtil",
+        "method": "decrypt",
+        "message_contains": [
+          "AES decryption failed"
+        ]
+      }
+    },
+    {
+      "id": "ig_36",
+      "decision": "ignore",
+      "category": "理赔支付参数校验异常",
+      "reason": "理赔支付参数校验异常当前按入参问题处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleMethodArgumentNotValidException",
+        "message_contains": [
+          "ASecondReimburseController.add"
+        ]
+      }
+    },
+    {
+      "id": "ig_37",
+      "decision": "ignore",
+      "category": "支付查询主订单日志",
+      "reason": "支付主订单查询日志误入异常集合，直接忽略",
+      "match": {
+        "class": "UserOrderServiceImpl",
+        "method": "verifyPayMainOrder",
+        "message_contains": [
+          "支付校验主订单查询主订单信息"
+        ]
+      }
+    },
+    {
+      "id": "ig_38",
+      "decision": "ignore",
+      "category": "前端订单查询日志",
+      "reason": "前端订单查询日志误入异常集合，直接忽略",
+      "match": {
+        "class": "UserOrderServiceImpl",
+        "method": "getOrderById",
+        "message_contains": [
+          "查询主订单信息"
+        ]
+      }
+    },
+    {
+      "id": "ig_39",
+      "decision": "ignore",
+      "category": "体检员工信息异常",
+      "reason": "体检问卷员工信息获取失败当前按业务数据问题处理",
+      "match": {
+        "class": "HealthPhysicalServiceImpl",
+        "method": "addQuestionnaireRecord",
+        "message_contains": [
+          "获取员工信息失败"
+        ]
+      }
+    },
+    {
+      "id": "ig_40",
+      "decision": "ignore",
+      "category": "商品搜索404噪音",
+      "reason": "商品搜索404属于错误路径或外部请求噪音，默认忽略",
+      "match": {
+        "class": "GoodsSearchServiceImpl",
+        "method": "goodsSearchResList",
+        "message_contains": [
+          "No static resource outbiz/goods/search."
+        ]
+      }
+    },
+    {
+      "id": "ig_41",
+      "decision": "ignore",
+      "category": "商品搜索编码异常",
+      "reason": "商品搜索入参编码异常当前按调用侧问题处理",
+      "match": {
+        "class": "GoodsSearchServiceImpl",
+        "method": "goodsSearchResList",
+        "message_contains": [
+          "Illegal base64 character 5b"
+        ]
+      }
+    },
+    {
+      "id": "ig_42",
+      "decision": "ignore",
+      "category": "商家后台权限拒绝",
+      "reason": "商家后台批量账号接口权限拒绝属于账号权限问题",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleAccessDeniedException",
+        "message_contains": [
+          "/admin/account/batch/",
+          "Access Denied"
+        ]
+      }
+    },
+    {
+      "id": "ig_43",
+      "decision": "ignore",
+      "category": "系统后台权限拒绝",
+      "reason": "系统角色列表权限拒绝属于后台权限问题",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleAccessDeniedException",
+        "message_contains": [
+          "/admin/role/list",
+          "Access Denied"
+        ]
+      }
+    },
+    {
+      "id": "ig_44",
+      "decision": "ignore",
+      "category": "订单插入SQL调试日志",
+      "reason": "订单插入SQL调试输出不作为异常处理",
+      "match": {
+        "class": "T.insert",
+        "method": "debug",
+        "message_contains": [
+          "==> Parameters:"
+        ]
+      }
+    },
+    {
+      "id": "ig_45",
+      "decision": "ignore",
+      "category": "订单详情查询日志",
+      "reason": "订单详情查询日志误入异常集合，直接忽略",
+      "match": {
+        "class": "BaseManagerImpl",
+        "method": "selectById",
+        "message_contains": [
+          "selectById:TradeOrdersPo("
+        ]
+      }
+    },
+    {
+      "id": "ig_46",
+      "decision": "ignore",
+      "category": "订单幂等校验日志",
+      "reason": "订单创建幂等校验日志误入异常集合，直接忽略",
+      "match": {
+        "class": "TradeOrdersServiceImpl",
+        "method": "checkIdempotency",
+        "message_contains": [
+          "提交创建订单-开始进行幂等校验"
+        ]
+      }
+    },
+    {
+      "id": "ig_47",
+      "decision": "ignore",
+      "category": "支付链接查询主订单日志",
+      "reason": "支付链接生成前查询主订单的INFO日志误入异常集合",
+      "match": {
+        "class": "UserOrderServiceImpl",
+        "method": "linkPayUrl",
+        "message_contains": [
+          "[linkPayUrl-查询主订单信息]",
+          "\"businessFail\":false"
+        ]
+      }
+    },
+    {
+      "id": "ig_48",
+      "decision": "ignore",
+      "category": "额度支付拆单开始日志",
+      "reason": "额度支付拆单开始处理属于流程日志，不作为异常",
+      "match": {
+        "class": "OrderSplitUtil",
+        "method": "splitQuotaSubOrders",
+        "message_contains": [
+          "[额度支付-订单拆单开始处理]"
+        ]
+      }
+    },
+    {
+      "id": "ig_49",
+      "decision": "ignore",
+      "category": "额度支付拆单结束日志",
+      "reason": "额度支付拆单结束且无需处理属于正常流程日志",
+      "match": {
+        "class": "OrderSplitUtil",
+        "method": "splitQuotaSubOrders",
+        "message_contains": [
+          "[额度支付-订单拆单结束]",
+          "无需处理"
+        ]
+      }
+    },
+    {
+      "id": "ig_50",
+      "decision": "ignore",
+      "category": "订单支付成功后处理日志",
+      "reason": "订单支付成功后处理属于成功态INFO日志，不作为异常",
+      "match": {
+        "class": "OnlineOrderSourceExecuteServiceImpl",
+        "method": "payAllSuccessAfter",
+        "message_contains": [
+          "网药订单支付成功后处理"
+        ]
+      }
+    },
+    {
+      "id": "ig_51",
+      "decision": "ignore",
+      "category": "订单退款受理赔限制",
+      "reason": "订单已进入理赔流程后无法退款，属于业务规则限制",
+      "match": {
+        "class": "OrderRefundServiceImpl",
+        "method": "execute",
+        "message_contains": [
+          "订单已生成理赔，无法退款"
+        ]
+      }
+    },
+    {
+      "id": "ig_52",
+      "decision": "ignore",
+      "category": "订单退款受保单状态限制",
+      "reason": "保单状态限制导致退款失败，属于业务规则限制",
+      "match": {
+        "class": "OrderRefundServiceImpl",
+        "method": "execute",
+        "message_contains": [
+          "保单状态异常"
+        ]
+      }
+    },
+    {
+      "id": "ig_53",
+      "decision": "ignore",
+      "category": "开放平台商品编码不存在",
+      "reason": "商家店铺下商品编码不存在，属于商品配置或同步问题",
+      "match": {
+        "class": "OrderCreateServiceImpl",
+        "method": "lambda$validateGoodsList$2",
+        "message_contains": [
+          "商品编码",
+          "信息不存在"
+        ]
+      }
+    },
+    {
+      "id": "ig_54",
+      "decision": "ignore",
+      "category": "系统字典类型查询异常",
+      "reason": "系统字典类型查询异常属于后台配置查询问题",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/dict/type/types/"
+        ]
+      }
+    },
+    {
+      "id": "ig_55",
+      "decision": "ignore",
+      "category": "前端换绑人脸手机号异常",
+      "reason": "换绑人脸手机号异常偏账号流程问题，默认忽略",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/member/replaceFacialPhone"
+        ]
+      }
+    },
+    {
+      "id": "ig_56",
+      "decision": "ignore",
+      "category": "服务商列表查询异常",
+      "reason": "服务商列表查询异常低频且偏查询侧问题",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/provider/current/list"
+        ]
+      }
+    },
+    {
+      "id": "ig_57",
+      "decision": "ignore",
+      "category": "绑卡列表查询异常",
+      "reason": "绑卡列表查询异常低频且偏查询问题",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/card/getStayBindCardList"
+        ]
+      }
+    },
+    {
+      "id": "ig_58",
+      "decision": "ignore",
+      "category": "订单服务回退请求头日志",
+      "reason": "订单服务回退工厂打印请求头属于伴生调试日志",
+      "match": {
+        "class": "RemoteTradeOrderFallbackFactory",
+        "method": "create",
+        "message_contains": [
+          "订单服务调用请求头信息:"
+        ]
+      }
+    },
+    {
+      "id": "ig_59",
+      "decision": "ignore",
+      "category": "绿通评价提交异常",
+      "reason": "绿通评价提交流程低频异常，默认按低运维价值处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/bizEvaluate/evaluate"
+        ]
+      }
+    },
+    {
+      "id": "ig_60",
+      "decision": "ignore",
+      "category": "商家商品批量上架导入异常",
+      "reason": "商家商品批量上架导入异常属于后台业务导入问题",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/goods/online/batch/import"
+        ]
+      }
+    },
+    {
+      "id": "ig_61",
+      "decision": "ignore",
+      "category": "员工导入下级异常",
+      "reason": "员工导入异常属于后台数据导入问题",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/employee/importExcelSubordinate"
+        ]
+      }
+    },
+    {
+      "id": "ig_62",
+      "decision": "ignore",
+      "category": "HUT后台导入异常",
+      "reason": "HUT后台导入异常属于低频业务导入问题",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/hut/importHut"
+        ]
+      }
+    },
+    {
+      "id": "at_01",
+      "decision": "attention",
+      "category": "基础设施-数据库连接丢失",
+      "reason": "Druid连接池数据库连接断开",
+      "match": {
+        "class_contains": [
+          "DruidPooledStatement",
+          "DruidDataSource"
+        ],
+        "message_contains": [
+          "CommunicationsException"
+        ]
+      }
+    },
+    {
+      "id": "at_02",
+      "decision": "attention",
+      "category": "分布式锁-执行失败",
+      "reason": "Redisson分布式锁失败",
+      "match": {
+        "class": "RedissonService",
+        "message_contains": [
+          "分布式锁"
+        ]
+      }
+    },
+    {
+      "id": "at_03",
+      "decision": "attention",
+      "category": "分布式事务-Seata异常",
+      "reason": "Seata分布式事务异常",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "exception_contains": [
+          "io.seata"
+        ]
+      }
+    },
+    {
+      "id": "at_04",
+      "decision": "observe",
+      "category": "支付入口-全局异常",
+      "reason": "支付入口的全局兜底异常，通常需要结合更具体的实现类异常一起看",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "message_contains": [
+          "/inner/pay/"
+        ]
+      }
+    },
+    {
+      "id": "at_05",
+      "decision": "observe",
+      "category": "理赔入口-全局异常",
+      "reason": "理赔入口的全局兜底异常，通常是更具体理赔异常的伴生信号",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "message_contains": [
+          "/inner/cases/"
+        ]
+      }
+    },
+    {
+      "id": "at_06",
+      "decision": "attention",
+      "category": "理赔核心-案件推送失败",
+      "reason": "理赔案件推送失败，属于高频核心链路异常",
+      "match": {
+        "class": "SettleClaimCasesServiceImpl",
+        "method": "addClaimCases",
+        "message_contains": [
+          "案件推送失败异常信息"
+        ]
+      }
+    },
+    {
+      "id": "at_07",
+      "decision": "attention",
+      "category": "支付核心-额度支付异常",
+      "reason": "额度支付业务异常，属于支付核心链路",
+      "match": {
+        "class": "UserOrderServiceImpl",
+        "method": "payQuota",
+        "message_contains": [
+          "[额度支付 业务异常]"
+        ]
+      }
+    },
+    {
+      "id": "at_08",
+      "decision": "attention",
+      "category": "开放平台-创建订单断言异常",
+      "reason": "开放平台创建订单断言异常，属于核心交易链路",
+      "match": {
+        "class": "OrderCreateServiceImpl",
+        "method": "execute",
+        "message_contains": [
+          "[OPEN 创建订单 断言异常]"
+        ]
+      }
+    },
+    {
+      "id": "at_09",
+      "decision": "attention",
+      "category": "订单MQ-通用订单更新异常",
+      "reason": "订单MQ更新逻辑异常，需关注订单状态处理",
+      "match": {
+        "class": "OrderExecuteService",
+        "method": "doExecute",
+        "message_contains": [
+          "[通用订单更新逻辑异常]"
+        ]
+      }
+    },
+    {
+      "id": "at_10",
+      "decision": "attention",
+      "category": "订单MQ-TPA消息消费失败",
+      "reason": "TPA相关MQ消息消费失败",
+      "match": {
+        "class": "TpaConsumer",
+        "method": "doConsume",
+        "message_contains": [
+          "消息消费处理失败"
+        ]
+      }
+    },
+    {
+      "id": "at_11",
+      "decision": "attention",
+      "category": "理赔核心-批量生成资料失败",
+      "reason": "批量理赔资料生成失败，属于理赔链路异常",
+      "match": {
+        "class": "SettleClaimServiceImpl",
+        "method": "generateClaimMaterial",
+        "message_contains": [
+          "批量生成理赔资料失败"
+        ]
+      }
+    },
+    {
+      "id": "at_12",
+      "decision": "attention",
+      "category": "下游依赖-保障卡详情服务失败",
+      "reason": "下游保障卡详情服务调用失败",
+      "match": {
+        "class": "FallbackErrorUtil",
+        "method": "logError",
+        "message_contains": [
+          "保障卡详情服务调用失败"
+        ]
+      }
+    },
+    {
+      "id": "at_13",
+      "decision": "attention",
+      "category": "下游依赖-保单服务回退失败",
+      "reason": "保单服务回退失败，属于跨服务依赖异常",
+      "match": {
+        "class": "RemotePolicyServiceFallbackFactory",
+        "method": "listInPolicyNonTan",
+        "message_contains": [
+          "查询保单信息异常"
+        ]
+      }
+    },
+    {
+      "id": "at_14",
+      "decision": "attention",
+      "category": "理赔MQ-结案通知异常",
+      "reason": "结案通知消费处理异常，属于理赔MQ链路",
+      "match": {
+        "class": "SettleClaimCasesServiceImpl",
+        "method": "noticeClosure",
+        "message_contains": [
+          "处理结案通知时发生业务异常"
+        ]
+      }
+    },
+    {
+      "id": "at_15",
+      "decision": "attention",
+      "category": "下游依赖-TPA服务回退失败",
+      "reason": "TPA服务回退失败",
+      "match": {
+        "class": "RemoteSettleClaimCasesServiceFallbackFactory",
+        "method": "create",
+        "message_contains": [
+          "TPA服务调用失败"
+        ]
+      }
+    },
+    {
+      "id": "at_16",
+      "decision": "attention",
+      "category": "下游依赖-商品搜索超时",
+      "reason": "商品搜索服务超时，属于依赖异常",
+      "match": {
+        "class": "GoodsSearchServiceImpl",
+        "method": "goodsSearchResList",
+        "message_contains": [
+          "SocketTimeoutException"
+        ]
+      }
+    },
+    {
+      "id": "at_17",
+      "decision": "attention",
+      "category": "下游依赖-保险公司服务失败",
+      "reason": "保险公司服务调用失败",
+      "match": {
+        "class": "RemoteInsuranceCompanyServiceFallbackFactory",
+        "method": "create",
+        "message_contains": [
+          "保险公司服务调用失败"
+        ]
+      }
+    },
+    {
+      "id": "at_18",
+      "decision": "attention",
+      "category": "下游依赖-保司成品表导出失败",
+      "reason": "保司成品表导出依赖失败",
+      "match": {
+        "class": "BatchCardExportServiceImpl",
+        "method": "agentExportProcess",
+        "message_contains": [
+          "保司成品表调用生成文件失败"
+        ]
+      }
+    },
+    {
+      "id": "at_19",
+      "decision": "attention",
+      "category": "下游依赖-订单服务回退失败",
+      "reason": "订单服务回退失败",
+      "match": {
+        "class": "RemoteTradeOrderFallbackFactory",
+        "method": "getTradeOrderById",
+        "message_contains": [
+          "订单服务调用失败"
+        ]
+      }
+    },
+    {
+      "id": "at_20",
+      "decision": "attention",
+      "category": "下游依赖-开放订单服务回退失败",
+      "reason": "开放订单服务回退失败",
+      "match": {
+        "class": "RemoteOpenTradeOrderFallbackFactory",
+        "method": "create",
+        "message_contains": [
+          "订单服务调用失败"
+        ]
+      }
+    },
+    {
+      "id": "at_21",
+      "decision": "attention",
+      "category": "下游依赖-商铺服务回退失败",
+      "reason": "商铺服务回退失败",
+      "match": {
+        "class": "RemoteShopFallbackFactory",
+        "method": "create",
+        "message_contains": [
+          "查询商铺门店列表调用失败"
+        ]
+      }
+    },
+    {
+      "id": "at_22",
+      "decision": "attention",
+      "category": "下游依赖-绿通权益卡服务失败",
+      "reason": "绿通权益卡服务回退失败",
+      "match": {
+        "class": "RemoteGreenCardServiceFallbackFactory",
+        "method": "create",
+        "message_contains": [
+          "绿通权益卡服务调用失败"
+        ]
+      }
+    },
+    {
+      "id": "at_23",
+      "decision": "attention",
+      "category": "下游依赖-短信发送超时",
+      "reason": "短信服务商调用超时或失败",
+      "match": {
+        "class": "ShLianLuSmsSenderServiceImpl",
+        "method": "sendSms",
+        "message_contains": [
+          "短信发送失败"
+        ]
+      }
+    },
+    {
+      "id": "at_24",
+      "decision": "attention",
+      "category": "下游依赖-日志服务回退失败",
+      "reason": "日志服务回退失败",
+      "match": {
+        "class": "RemoteLogFallbackFactory",
+        "method": "create",
+        "message_contains": [
+          "日志服务调用失败"
+        ]
+      }
+    },
+    {
+      "id": "at_25",
+      "decision": "attention",
+      "category": "支付核心-额度支付子订单缺失",
+      "reason": "额度支付执行时子订单信息为空，属于核心支付链路异常",
+      "match": {
+        "class": "OrderQuotaPayServiceImpl",
+        "method": "execute",
+        "message_contains": [
+          "子订单信息为空"
+        ]
+      }
+    },
+    {
+      "id": "at_26",
+      "decision": "attention",
+      "category": "支付回调-签名校验失败",
+      "reason": "微信支付回调签名校验失败，需关注支付回调链路",
+      "match": {
+        "class": "ChannelNotifyController",
+        "method": "orderNotify",
+        "message_contains": [
+          "signature verification failed"
+        ]
+      }
+    },
+    {
+      "id": "at_27",
+      "decision": "attention",
+      "category": "下游依赖-订单服务调用失败",
+      "reason": "订单服务回退运行时异常，属于明确的下游依赖失败",
+      "match": {
+        "class": "FallbackErrorUtil",
+        "method": "logError",
+        "message_contains": [
+          "订单服务调用失败 运行时异常"
+        ]
+      }
+    },
+    {
+      "id": "at_28",
+      "decision": "attention",
+      "category": "商家收银台-创建订单入口异常",
+      "reason": "商家收银台创建订单入口跨天重复异常，属于核心路径关注项",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cashier/order/createMerchantOrder"
+        ]
+      }
+    },
+    {
+      "id": "at_29",
+      "decision": "attention",
+      "category": "案件审核失败入口异常",
+      "reason": "案件审核失败入口跨天重复异常，属于理赔核心路径关注项",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cases/reviewFailed"
+        ]
+      }
+    },
+    {
+      "id": "ob_01",
+      "decision": "observe",
+      "category": "前端账号-手机实名异常",
+      "reason": "前端实名手机号流程高频异常，先观察不直接告警",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/member/auth/person/mobile"
+        ]
+      }
+    },
+    {
+      "id": "ob_02",
+      "decision": "observe",
+      "category": "理赔附件-下载文件失败",
+      "reason": "理赔附件下载失败，高频但需结合上下游分析",
+      "match": {
+        "class": "SettleClaimCasesServiceImpl",
+        "method": "getOssUrl",
+        "message_contains": [
+          "下载文件失败"
+        ]
+      }
+    },
+    {
+      "id": "ob_03",
+      "decision": "observe",
+      "category": "前端账号-设置密码异常",
+      "reason": "设置密码流程异常，暂列观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/member/setPassword"
+        ]
+      }
+    },
+    {
+      "id": "ob_04",
+      "decision": "observe",
+      "category": "理赔参数校验异常",
+      "reason": "理赔入参校验异常，高频需观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleMethodArgumentNotValidException",
+        "message_contains": [
+          "ISettleClaimCasesController.addClaimCasesV1"
+        ]
+      }
+    },
+    {
+      "id": "ob_05",
+      "decision": "observe",
+      "category": "权益卡查询异常",
+      "reason": "权益卡查询返回异常，先观察",
+      "match": {
+        "class": "GreenCardServiceImpl",
+        "method": "getVideoDoctorLink",
+        "message_contains": [
+          "权益卡查询---"
+        ]
+      }
+    },
+    {
+      "id": "ob_06",
+      "decision": "observe",
+      "category": "理赔支付路径异常",
+      "reason": "理赔支付接口异常，先观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/reimburse/reimbursemenPayment"
+        ]
+      }
+    },
+    {
+      "id": "ob_07",
+      "decision": "observe",
+      "category": "前端参数类型异常",
+      "reason": "前端传 undefined 引起的参数类型异常，先观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleMethodArgumentTypeMismatchException",
+        "message_contains": [
+          "undefined"
+        ]
+      }
+    },
+    {
+      "id": "ob_08",
+      "decision": "observe",
+      "category": "商品搜索数据转换异常",
+      "reason": "商品搜索返回数据转换异常，先观察",
+      "match": {
+        "class": "GoodsSearchServiceImpl",
+        "method": "goodsSearchResList",
+        "message_contains": [
+          "ForestConvertException"
+        ]
+      }
+    },
+    {
+      "id": "ob_09",
+      "decision": "observe",
+      "category": "商品不存在待观察",
+      "reason": "健康商城商品不存在，高频出现先观察",
+      "match": {
+        "class": "HealthShopOrderSourceExecuteServiceImpl",
+        "method": "verifyPrePayOrder",
+        "message_contains": [
+          "购买商品信息不存在"
+        ]
+      }
+    },
+    {
+      "id": "ob_10",
+      "decision": "observe",
+      "category": "开放平台确认付款异常",
+      "reason": "开放平台确认付款业务异常，先观察",
+      "match": {
+        "class": "OrderConfirmPayServiceImpl",
+        "method": "execute",
+        "message_contains": [
+          "[OPEN 确认付款 业务异常]"
+        ]
+      }
+    },
+    {
+      "id": "ob_11",
+      "decision": "observe",
+      "category": "异步线程未捕获异常",
+      "reason": "异步线程未捕获异常，先观察",
+      "match": {
+        "class": "SimpleAsyncUncaughtExceptionHandler",
+        "method": "handleUncaughtException",
+        "message_contains": [
+          "Unexpected exception occurred invoking async method"
+        ]
+      }
+    },
+    {
+      "id": "ob_12",
+      "decision": "observe",
+      "category": "源策略缓存异常",
+      "reason": "源策略缓存异常，先观察",
+      "match": {
+        "class": "SourceUtil",
+        "method": "lambda$getSourceCacheByEnterpriseId$0",
+        "message_contains": [
+          "企业Id",
+          "对应的企业信息不存在"
+        ]
+      }
+    },
+    {
+      "id": "ob_13",
+      "decision": "observe",
+      "category": "保单试算查询异常",
+      "reason": "保单试算查询失败频次高，但当前证据不足以直接升为 attention",
+      "match": {
+        "class": "QuotaTrialServiceImpl",
+        "method": "addQuotaTrial",
+        "message_contains": [
+          "查询失败"
+        ]
+      }
+    },
+    {
+      "id": "ob_14",
+      "decision": "observe",
+      "category": "家庭成员参数校验异常",
+      "reason": "家庭成员保存入参校验异常，先保留观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleMethodArgumentNotValidException",
+        "message_contains": [
+          "MemberFamilyController.save"
+        ]
+      }
+    },
+    {
+      "id": "ob_15",
+      "decision": "observe",
+      "category": "支付路径-额度支付入口异常",
+      "reason": "额度支付入口异常频次高，但当前只保留入口层信号",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/orders/payQuota"
+        ]
+      }
+    },
+    {
+      "id": "ob_16",
+      "decision": "observe",
+      "category": "支付路径-生成支付链接异常",
+      "reason": "支付链接生成入口异常，先观察不升 attention",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/orders/linkPayUrl"
+        ]
+      }
+    },
+    {
+      "id": "ob_17",
+      "decision": "observe",
+      "category": "商家收银台-验卡入口异常",
+      "reason": "商家收银台验卡入口异常，先作为观察项处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cashier/order/checkCard"
+        ]
+      }
+    },
+    {
+      "id": "ob_18",
+      "decision": "observe",
+      "category": "商家收银台-额度支付入口异常",
+      "reason": "商家收银台额度支付入口异常，先作为观察项处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cashier/order/payQuota"
+        ]
+      }
+    },
+    {
+      "id": "ob_19",
+      "decision": "observe",
+      "category": "订单创建入口异常",
+      "reason": "订单创建入口异常频次高，但仍缺少具体实现类证据",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/orders/submitUserOrder"
+        ]
+      }
+    },
+    {
+      "id": "ob_20",
+      "decision": "observe",
+      "category": "前端账号-修改登录密码异常",
+      "reason": "修改登录密码路径异常，先作为账号流程观察项处理",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/member/replaceLoginPwd"
+        ]
+      }
+    },
+    {
+      "id": "ob_21",
+      "decision": "observe",
+      "category": "商品搜索连接失败",
+      "reason": "商品搜索连接失败需要保留可见性，但暂不直接升 attention",
+      "match": {
+        "class": "GoodsSearchServiceImpl",
+        "method": "goodsSearchResList",
+        "message_contains": [
+          "ConnectException: Failed to connect"
+        ]
+      }
+    },
+    {
+      "id": "ob_22",
+      "decision": "observe",
+      "category": "事件循环关闭异常",
+      "reason": "监听通知任务提交失败需要保留观察，先不直接忽略",
+      "match": {
+        "class_contains": [
+          "rejectedExecution"
+        ],
+        "method": "safeExecute",
+        "message_contains": [
+          "Event loop shut down?"
+        ]
+      }
+    },
+    {
+      "id": "ob_23",
+      "decision": "observe",
+      "category": "网关连接提前关闭",
+      "reason": "网关到下游连接提前关闭，先作为依赖稳定性观察项处理",
+      "match": {
+        "class": "GatewayExceptionHandler",
+        "method": "handle",
+        "message_contains": [
+          "Connection prematurely closed BEFORE response"
+        ]
+      }
+    },
+    {
+      "id": "ob_24",
+      "decision": "observe",
+      "category": "权益卡有效期异常",
+      "reason": "视频医生跳转时权益卡不在有效期内，先保留观察",
+      "match": {
+        "class": "GreenCardServiceImpl",
+        "method": "getVideoDoctorLink",
+        "message_contains": [
+          "权益卡未在有效期内"
+        ]
+      }
+    },
+    {
+      "id": "ob_25",
+      "decision": "observe",
+      "category": "允康扫码登录数据库异常",
+      "reason": "允康扫码登录出现数据库更新异常，先保留观察",
+      "match": {
+        "class": "YunkangServiceImpl",
+        "method": "yunkangQRLogin",
+        "message_contains": [
+          "Error updating database"
+        ]
+      }
+    },
+    {
+      "id": "ob_26",
+      "decision": "observe",
+      "category": "工单提交异常",
+      "reason": "绿色通道工单提交异常需要继续观察",
+      "match": {
+        "class": "GreenWorkOrderServiceImpl",
+        "method": "openSubmitWorkOrder",
+        "message_contains": [
+          "提交工单异常"
+        ]
+      }
+    },
+    {
+      "id": "ob_27",
+      "decision": "observe",
+      "category": "商家数据截断异常",
+      "reason": "商家数据写入字段截断，属于数据质量问题但需保留观察",
+      "match": {
+        "class": "AbstractDMLBaseExecutor",
+        "method": "executeAutoCommitTrue",
+        "message_contains": [
+          "Data too long for column 'province_name'"
+        ]
+      }
+    },
+    {
+      "id": "ob_28",
+      "decision": "observe",
+      "category": "订单退款入口异常",
+      "reason": "订单退款入口异常当前仅保留入口信号",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/orders/refundOrder"
+        ]
+      }
+    },
+    {
+      "id": "ob_29",
+      "decision": "observe",
+      "category": "确认付款创建子订单入口异常",
+      "reason": "确认付款创建子订单入口异常当前仅保留入口信号",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/inner/orders/confirmPayCreateSubOrder"
+        ]
+      }
+    },
+    {
+      "id": "ob_30",
+      "decision": "observe",
+      "category": "案件列表入口异常",
+      "reason": "案件列表入口异常先保留观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cases/list"
+        ]
+      }
+    },
+    {
+      "id": "ob_31",
+      "decision": "observe",
+      "category": "前端现金支付入口异常",
+      "reason": "现金支付入口异常先保留观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/orders/payCash"
+        ]
+      }
+    },
+    {
+      "id": "ob_32",
+      "decision": "observe",
+      "category": "商家收银台订单列表异常",
+      "reason": "商家收银台订单列表异常先保留观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cashier/order/cashierOrderList"
+        ]
+      }
+    },
+    {
+      "id": "ob_33",
+      "decision": "observe",
+      "category": "商家收银台现金支付异常",
+      "reason": "商家收银台现金支付入口异常先保留观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cashier/order/payCash"
+        ]
+      }
+    },
+    {
+      "id": "ob_34",
+      "decision": "observe",
+      "category": "案件企业列表入口异常",
+      "reason": "案件企业列表入口异常先保留观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cases/enterpriseList"
+        ]
+      }
+    },
+    {
+      "id": "ob_35",
+      "decision": "observe",
+      "category": "案件批量上报入口异常",
+      "reason": "案件批量上报入口异常先保留观察",
+      "match": {
+        "class": "GlobalExceptionHandler",
+        "method": "handleRuntimeException",
+        "message_contains": [
+          "/admin/cases/batchReportCase"
+        ]
+      }
+    },
+    {
+      "id": "ob_36",
+      "decision": "observe",
+      "category": "开放平台创建订单业务异常",
+      "reason": "开放平台创建订单业务异常量大但缺少稳定根因，先归为观察项",
+      "match": {
+        "class": "OrderCreateServiceImpl",
+        "method": "execute",
+        "message_contains": [
+          "[OPEN 创建订单 业务异常]"
+        ]
+      }
+    },
+    {
+      "id": "ob_37",
+      "decision": "observe",
+      "category": "订单创建业务异常",
+      "reason": "订单创建业务异常当前证据不足以直接升 attention，先保留观察",
+      "match": {
+        "class": "TradeOrdersServiceImpl",
+        "method": "submitUserOrder",
+        "message_contains": [
+          "提交创建订单 业务异常",
+          "提交创建订单 创建订单失败"
+        ]
+      }
+    },
+    {
+      "id": "ob_38",
+      "decision": "observe",
+      "category": "确认付款创建子订单业务异常",
+      "reason": "确认付款创建子订单业务异常先保留观察",
+      "match": {
+        "class": "TradeOrdersServiceImpl",
+        "method": "confirmPayCreateSubOrder",
+        "message_contains": [
+          "[确认付款 业务异常]"
+        ]
+      }
+    },
+    {
+      "id": "ob_39",
+      "decision": "observe",
+      "category": "订单回调重试异常",
+      "reason": "订单回调重试异常涉及下游回调链路，先保留观察",
+      "match": {
+        "class": "OrderNotifyService",
+        "method": "executeOrderStatusNotify",
+        "message_contains": [
+          "[订单回调处理] 重试执行出现异常"
+        ]
+      }
+    }
+  ]
+}
