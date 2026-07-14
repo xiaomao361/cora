@@ -32,7 +32,7 @@ The decision contract is:
 
 Every aggregate flush reevaluates the latest representative event with the
 updated total occurrence count. The decision is stored transactionally with
-the service-scoped Problem update in SQLite schema v4.
+the service-scoped Problem update in SQLite schema v5.
 
 Cora Core is not allowed to block fact persistence. If the Core fails or
 returns an invalid decision, Cora Server stores the Problem and records a
@@ -52,8 +52,10 @@ consistent cases may be crystallized into a human-reviewed rule. A learned local
 filter is gated until a product line has enough reviewed cases and a frozen eval
 set.
 
-The repository has evaluation and feedback schemas, but no case persistence,
-retrieval, LLM adapter, candidate-rule promotion, hot reload, or learned filter.
+The repository now persists immutable product-line cases through the same MCP
+surface used for query, and exact Problem detail returns its prior cases. Case
+top-k retrieval inside Core, LLM adapter, candidate-rule promotion, hot reload,
+and a learned filter remain absent.
 Static Pack reload alone would improve operations but would not fulfill the Core
 iteration loop. Automatic production activation without evaluation and rollback
 is outside the current direction.
@@ -123,8 +125,9 @@ before statistical model adoption is reconsidered.
 `config/cora-base-v0.json` is the deployable Core manifest. It binds the Cora
 contract, experience-pack version, product line, evaluation evidence, and
 fail-open behavior. `schemas/cora-evaluation-row.v1.schema.json` and
-`schemas/cora-feedback.v1.schema.json` define the stable records that Cora Agent
-and a later review workflow may emit.
+`schemas/cora-feedback.v1.schema.json` define the older evaluation feedback
+record. `schemas/cora-case.v1.schema.json` defines the active immutable outcome
+record written through MCP.
 
 Cora remains in deterministic rule mode until a new dataset has at least 300
 independently reviewed fingerprints, including at least 50 attention, 50

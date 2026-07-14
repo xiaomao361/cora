@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -11,12 +12,14 @@ import (
 
 	"github.com/claracore/cora/internal/agent"
 	"github.com/claracore/cora/internal/auth"
+	"github.com/claracore/cora/internal/buildinfo"
 )
 
 func main() {
 	cfg := agent.Config{}
 	configFile := flag.String("config.file", "", "Promtail-style YAML configuration file")
 	checkConfig := flag.Bool("check-config", false, "validate config.file and exit")
+	showVersion := flag.Bool("version", false, "print build identity and exit")
 	authTokenFile := flag.String("auth-token-file", "", "file containing the Server bearer token")
 	flag.StringVar(&cfg.Path, "file", "", "active log file to follow")
 	flag.StringVar(&cfg.PositionsPath, "positions", "./cora-agent-positions.json", "durable positions file")
@@ -37,6 +40,10 @@ func main() {
 	flag.DurationVar(&cfg.MinBackoff, "min-backoff", 250*time.Millisecond, "initial retry backoff")
 	flag.DurationVar(&cfg.MaxBackoff, "max-backoff", 5*time.Second, "maximum retry backoff")
 	flag.Parse()
+	if *showVersion {
+		_ = json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
+		return
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

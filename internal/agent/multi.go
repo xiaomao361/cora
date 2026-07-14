@@ -7,9 +7,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"sync"
 	"time"
+
+	"github.com/claracore/cora/internal/buildinfo"
 )
 
 func RunMulti(ctx context.Context, runtime RuntimeConfig) error {
@@ -31,6 +32,10 @@ func RunMulti(ctx context.Context, runtime RuntimeConfig) error {
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	runtimes := make([]*targetRuntime, len(runtime.Targets))
+	for index, target := range runtime.Targets {
+		runtimes[index] = newTargetRuntime(target)
+	}
 
 	var server *http.Server
 	serverErrors := make(chan error, 1)
@@ -42,21 +47,25 @@ func RunMulti(ctx context.Context, runtime RuntimeConfig) error {
 		mux := http.NewServeMux()
 		mux.HandleFunc("GET /healthz", func(writer http.ResponseWriter, _ *http.Request) {
 			writer.Header().Set("content-type", "application/json")
-			json.NewEncoder(writer).Encode(map[string]any{"status": "ok", "targets": len(runtime.Targets)})
+			json.NewEncoder(writer).Encode(map[string]any{
+				"status": "ok", "targets": len(runtimes),
+				"target_statuses": runtimeSnapshots(runtimes), "build": buildinfo.Current(),
+			})
 		})
 		mux.HandleFunc("GET /readyz", func(writer http.ResponseWriter, _ *http.Request) {
-			readable, unavailable := targetAvailability(runtime.Targets)
+			ready, reasons := runtimeReadiness(runtimes)
 			status := "ready"
 			code := http.StatusOK
-			if len(unavailable) > 0 {
+			if !ready {
 				status = "degraded"
 				code = http.StatusServiceUnavailable
 			}
 			writer.Header().Set("content-type", "application/json")
 			writer.WriteHeader(code)
 			json.NewEncoder(writer).Encode(map[string]any{
-				"status": status, "targets": len(runtime.Targets),
-				"readable_targets": readable, "unavailable_services": unavailable,
+				"status": status, "reasons": reasons, "targets": len(runtimes),
+				"readable_targets": readableRuntimeCount(runtimes),
+				"target_statuses":  runtimeSnapshots(runtimes), "build": buildinfo.Current(),
 			})
 		})
 		server = &http.Server{Handler: mux, ReadHeaderTimeout: 2 * time.Second}
@@ -69,12 +78,13 @@ func RunMulti(ctx context.Context, runtime RuntimeConfig) error {
 
 	targetErrors := make(chan error, len(runtime.Targets))
 	var workers sync.WaitGroup
-	for _, target := range runtime.Targets {
+	for index, target := range runtime.Targets {
 		target := target
+		targetRuntime := runtimes[index]
 		workers.Add(1)
 		go func() {
 			defer workers.Done()
-			if err := runTarget(runCtx, target, positions); err != nil && runCtx.Err() == nil {
+			if err := runTarget(runCtx, target, positions, targetRuntime); err != nil && runCtx.Err() == nil {
 				targetErrors <- fmt.Errorf("target %s (%s): %w", target.Service, target.Path, err)
 			}
 		}()
@@ -96,17 +106,37 @@ func RunMulti(ctx context.Context, runtime RuntimeConfig) error {
 	return result
 }
 
-func targetAvailability(targets []Config) (int, []string) {
-	readable := 0
-	unavailable := make([]string, 0)
-	for _, target := range targets {
-		file, err := os.Open(target.Path)
-		if err != nil {
-			unavailable = append(unavailable, target.Service)
-			continue
-		}
-		file.Close()
-		readable++
+func runtimeSnapshots(runtimes []*targetRuntime) []TargetStatus {
+	result := make([]TargetStatus, 0, len(runtimes))
+	for _, runtime := range runtimes {
+		result = append(result, runtime.snapshot())
 	}
-	return readable, unavailable
+	return result
+}
+
+func runtimeReadiness(runtimes []*targetRuntime) (bool, []string) {
+	reasons := []string{}
+	for _, runtime := range runtimes {
+		status := runtime.snapshot()
+		if !status.Running {
+			reasons = append(reasons, status.Service+": worker is not running")
+		}
+		if !status.Readable {
+			reasons = append(reasons, status.Service+": log file is not readable")
+		}
+		if status.DeliveryFailing {
+			reasons = append(reasons, status.Service+": delivery is failing")
+		}
+	}
+	return len(reasons) == 0, reasons
+}
+
+func readableRuntimeCount(runtimes []*targetRuntime) int {
+	count := 0
+	for _, runtime := range runtimes {
+		if runtime.snapshot().Readable {
+			count++
+		}
+	}
+	return count
 }

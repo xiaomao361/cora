@@ -10,11 +10,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/claracore/cora/internal/buildinfo"
 	_ "modernc.org/sqlite"
 )
 
@@ -48,18 +51,20 @@ type Breadcrumb struct {
 }
 
 type Problem struct {
-	ID            int64     `json:"id"`
-	ProductLine   string    `json:"product_line"`
-	Fingerprint   string    `json:"fingerprint"`
-	Service       string    `json:"service"`
-	Environment   string    `json:"environment"`
-	ExceptionType string    `json:"exception_type"`
-	Logger        string    `json:"logger"`
-	Count         int64     `json:"count"`
-	FirstSeen     time.Time `json:"first_seen"`
-	LastSeen      time.Time `json:"last_seen"`
-	FirstSample   string    `json:"first_sample"`
-	LatestSample  string    `json:"latest_sample"`
+	ID             int64     `json:"id"`
+	ProductLine    string    `json:"product_line"`
+	Fingerprint    string    `json:"fingerprint"`
+	Service        string    `json:"service"`
+	Environment    string    `json:"environment"`
+	ExceptionType  string    `json:"exception_type"`
+	Logger         string    `json:"logger"`
+	Count          int64     `json:"count"`
+	FirstSeen      time.Time `json:"first_seen"`
+	LastSeen       time.Time `json:"last_seen"`
+	FirstSample    string    `json:"first_sample"`
+	LatestSample   string    `json:"latest_sample"`
+	State          string    `json:"state"`
+	StateChangedAt time.Time `json:"state_changed_at"`
 }
 
 type TrendPoint struct {
@@ -154,8 +159,19 @@ func isFrameworkFrame(frame string) bool {
 }
 
 type Store struct {
-	db   *sql.DB
-	cora Cora
+	db       *sql.DB
+	cora     Cora
+	healthMu sync.Mutex
+	health   StoreHealth
+}
+
+type StoreHealth struct {
+	SchemaVersion         int        `json:"schema_version"`
+	SuccessfulWrites      uint64     `json:"successful_writes"`
+	WriteFailures         uint64     `json:"write_failures"`
+	LastSuccessfulWriteAt *time.Time `json:"last_successful_write_at,omitempty"`
+	LastWriteFailureAt    *time.Time `json:"last_write_failure_at,omitempty"`
+	LastWriteError        string     `json:"last_write_error,omitempty"`
 }
 
 func OpenStore(path string) (*Store, error) {
@@ -187,7 +203,18 @@ func OpenStoreWithCora(path string, core Cora) (*Store, error) {
 		db.Close()
 		return nil, err
 	}
-	return &Store{db: db, cora: core}, nil
+	if path != ":memory:" && !strings.HasPrefix(path, "file:") {
+		if err := os.Chmod(path, 0o600); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("protect store: %w", err)
+		}
+	}
+	version, err := databaseSchemaVersion(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return &Store{db: db, cora: core, health: StoreHealth{SchemaVersion: version}}, nil
 }
 
 type migration struct {
@@ -331,11 +358,38 @@ var schemaMigrations = []migration{
 		`CREATE INDEX node_trend_points_problem_time
 			ON node_trend_points(product_line, service, fingerprint, node, window_end)`,
 	}},
+	{version: 5, statements: []string{
+		`ALTER TABLE problems ADD COLUMN state TEXT NOT NULL DEFAULT 'new'
+			CHECK(state IN ('new', 'acknowledged', 'resolved', 'recurring'))`,
+		`ALTER TABLE problems ADD COLUMN state_changed_at TEXT NOT NULL DEFAULT ''`,
+		`UPDATE problems SET state_changed_at = last_seen WHERE state_changed_at = ''`,
+		`CREATE INDEX problems_line_state_last_seen
+			ON problems(product_line, state, last_seen DESC)`,
+		`CREATE TABLE problem_cases (
+			id INTEGER PRIMARY KEY,
+			problem_id INTEGER NOT NULL,
+			product_line TEXT NOT NULL,
+			service TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			is_real_problem INTEGER NOT NULL CHECK(is_real_problem IN (0, 1)),
+			handled INTEGER NOT NULL CHECK(handled IN (0, 1)),
+			root_cause TEXT NOT NULL,
+			action TEXT NOT NULL,
+			prior_state TEXT NOT NULL,
+			resulting_state TEXT NOT NULL,
+			context_snapshot TEXT NOT NULL,
+			recorded_at TEXT NOT NULL,
+			FOREIGN KEY(problem_id) REFERENCES problems(id)
+		)`,
+		`CREATE INDEX problem_cases_problem_time
+			ON problem_cases(product_line, service, fingerprint, recorded_at DESC)`,
+	}},
 }
 
 func migrate(db *sql.DB, migrations []migration) error {
-	var version int
-	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+	version, err := databaseSchemaVersion(db)
+	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
 	latest := 0
@@ -374,7 +428,97 @@ func migrate(db *sql.DB, migrations []migration) error {
 	return nil
 }
 
+func databaseSchemaVersion(db *sql.DB) (int, error) {
+	var version int
+	if err := db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
+		return 0, err
+	}
+	return version, nil
+}
+
 func (s *Store) Close() error { return s.db.Close() }
+
+func (s *Store) Health() StoreHealth {
+	s.healthMu.Lock()
+	defer s.healthMu.Unlock()
+	return s.health
+}
+
+func (s *Store) recordWrite(result error) {
+	now := time.Now().UTC()
+	s.healthMu.Lock()
+	defer s.healthMu.Unlock()
+	if result == nil {
+		s.health.SuccessfulWrites++
+		s.health.LastSuccessfulWriteAt = &now
+		s.health.LastWriteError = ""
+		return
+	}
+	s.health.WriteFailures++
+	s.health.LastWriteFailureAt = &now
+	s.health.LastWriteError = result.Error()
+}
+
+func (s *Store) Ready(ctx context.Context) (bool, []string) {
+	reasons := []string{}
+	if err := s.db.PingContext(ctx); err != nil {
+		reasons = append(reasons, "sqlite ping failed: "+err.Error())
+	}
+	health := s.Health()
+	if health.LastWriteFailureAt != nil &&
+		(health.LastSuccessfulWriteAt == nil || health.LastWriteFailureAt.After(*health.LastSuccessfulWriteAt)) {
+		reasons = append(reasons, "latest SQLite write failed")
+	}
+	return len(reasons) == 0, reasons
+}
+
+func (s *Store) IntegrityCheck(ctx context.Context) error {
+	var result string
+	if err := s.db.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&result); err != nil {
+		return fmt.Errorf("SQLite quick_check: %w", err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("SQLite quick_check: %s", result)
+	}
+	return nil
+}
+
+func (s *Store) Backup(ctx context.Context, destination string) error {
+	if destination == "" {
+		return errors.New("backup destination is required")
+	}
+	absolute, err := filepath.Abs(destination)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(absolute); err == nil {
+		return fmt.Errorf("backup destination already exists: %s", absolute)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(absolute), 0o750); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `VACUUM INTO ?`, absolute); err != nil {
+		return fmt.Errorf("backup SQLite database: %w", err)
+	}
+	if err := os.Chmod(absolute, 0o600); err != nil {
+		return fmt.Errorf("protect backup: %w", err)
+	}
+	backup, err := sql.Open("sqlite", absolute)
+	if err != nil {
+		return err
+	}
+	defer backup.Close()
+	var check string
+	if err := backup.QueryRowContext(ctx, `PRAGMA quick_check`).Scan(&check); err != nil {
+		return fmt.Errorf("verify backup: %w", err)
+	}
+	if check != "ok" {
+		return fmt.Errorf("verify backup: %s", check)
+	}
+	return nil
+}
 
 func (s *Store) Record(ctx context.Context, event Event) error {
 	event, err := prepareEvent(event, time.Now().UTC())
@@ -426,10 +570,11 @@ func prepareEvent(event Event, now time.Time) (Event, error) {
 	return event, nil
 }
 
-func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[string]aggregate) error {
+func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[string]aggregate) (resultErr error) {
 	if len(aggregates) == 0 {
 		return nil
 	}
+	defer func() { s.recordWrite(resultErr) }()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -437,12 +582,12 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 	defer tx.Rollback()
 	for _, item := range aggregates {
 		var previousCount int64
-		var storedFirstSeen, storedLastSeen, storedFirstSample, storedLatestSample string
+		var storedFirstSeen, storedLastSeen, storedFirstSample, storedLatestSample, storedState, storedStateChangedAt string
 		firstOccurrence := false
-		err := tx.QueryRowContext(ctx, `SELECT count, first_seen, last_seen, first_sample, latest_sample
+		err := tx.QueryRowContext(ctx, `SELECT count, first_seen, last_seen, first_sample, latest_sample, state, state_changed_at
 			FROM problems WHERE product_line = ? AND service = ? AND fingerprint = ?`,
 			item.First.ProductLine, item.First.Service, item.Fingerprint).
-			Scan(&previousCount, &storedFirstSeen, &storedLastSeen, &storedFirstSample, &storedLatestSample)
+			Scan(&previousCount, &storedFirstSeen, &storedLastSeen, &storedFirstSample, &storedLatestSample, &storedState, &storedStateChangedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			firstOccurrence = true
 			previousCount = 0
@@ -504,21 +649,36 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 		if decision.DecidedAt.IsZero() {
 			decision.DecidedAt = windowEnd
 		}
+		state := ProblemStateNew
+		stateChangedAt := firstSeen
+		if !firstOccurrence {
+			state = storedState
+			stateChangedAt, err = time.Parse(time.RFC3339Nano, storedStateChangedAt)
+			if err != nil {
+				return fmt.Errorf("parse stored state_changed_at: %w", err)
+			}
+			if storedState == ProblemStateResolved && item.Latest.OccurredAt.After(stateChangedAt) {
+				state = ProblemStateRecurring
+				stateChangedAt = windowEnd
+			}
+		}
 		_, err = tx.ExecContext(ctx, `
 		INSERT INTO problems (
 			product_line, fingerprint, service, environment, exception_type, logger,
-			count, first_seen, last_seen, first_sample, latest_sample
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			count, first_seen, last_seen, first_sample, latest_sample, state, state_changed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(product_line, service, fingerprint) DO UPDATE SET
 			count = count + excluded.count,
 			first_seen = excluded.first_seen,
 			first_sample = excluded.first_sample,
 			last_seen = excluded.last_seen,
-			latest_sample = excluded.latest_sample`,
+			latest_sample = excluded.latest_sample,
+			state = excluded.state,
+			state_changed_at = excluded.state_changed_at`,
 			item.First.ProductLine, item.Fingerprint, item.First.Service, item.First.Environment,
 			item.First.ExceptionType, item.First.Logger, item.Count,
 			firstSeen.Format(time.RFC3339Nano), lastSeen.Format(time.RFC3339Nano),
-			string(firstSample), string(latestSample))
+			string(firstSample), string(latestSample), state, stateChangedAt.Format(time.RFC3339Nano))
 		if err != nil {
 			return err
 		}
@@ -579,7 +739,8 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 func (s *Store) Problems(ctx context.Context, productLine string) ([]Problem, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, product_line, fingerprint, service, environment, exception_type,
-		       logger, count, first_seen, last_seen, first_sample, latest_sample
+		       logger, count, first_seen, last_seen, first_sample, latest_sample,
+		       state, state_changed_at
 		FROM problems WHERE product_line = ? ORDER BY last_seen DESC`, productLine)
 	if err != nil {
 		return nil, err
@@ -588,14 +749,16 @@ func (s *Store) Problems(ctx context.Context, productLine string) ([]Problem, er
 	problems := []Problem{}
 	for rows.Next() {
 		var problem Problem
-		var firstSeen, lastSeen string
+		var firstSeen, lastSeen, stateChangedAt string
 		if err := rows.Scan(&problem.ID, &problem.ProductLine, &problem.Fingerprint,
 			&problem.Service, &problem.Environment, &problem.ExceptionType, &problem.Logger,
-			&problem.Count, &firstSeen, &lastSeen, &problem.FirstSample, &problem.LatestSample); err != nil {
+			&problem.Count, &firstSeen, &lastSeen, &problem.FirstSample, &problem.LatestSample,
+			&problem.State, &stateChangedAt); err != nil {
 			return nil, err
 		}
 		problem.FirstSeen, _ = time.Parse(time.RFC3339Nano, firstSeen)
 		problem.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeen)
+		problem.StateChangedAt, _ = time.Parse(time.RFC3339Nano, stateChangedAt)
 		problems = append(problems, problem)
 	}
 	return problems, rows.Err()
@@ -680,7 +843,7 @@ func (s *Store) NodeTrendPoints(ctx context.Context, productLine, service, finge
 func (s *Store) Attention(ctx context.Context, productLine string) ([]AttentionItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.product_line, p.fingerprint, p.service, p.environment,
-		       p.exception_type, p.logger, p.count, p.last_seen,
+		       p.exception_type, p.logger, p.count, p.last_seen, p.state, p.state_changed_at,
 		       d.decision, d.category, d.rule_id, d.reason, d.source,
 		       d.experience_version, d.decided_at
 		FROM problems p
@@ -695,14 +858,15 @@ func (s *Store) Attention(ctx context.Context, productLine string) ([]AttentionI
 	items := []AttentionItem{}
 	for rows.Next() {
 		var item AttentionItem
-		var lastSeen, decidedAt string
+		var lastSeen, stateChangedAt, decidedAt string
 		if err := rows.Scan(&item.ProblemID, &item.ProductLine, &item.Fingerprint,
 			&item.Service, &item.Environment, &item.ExceptionType, &item.Logger,
-			&item.Count, &lastSeen, &item.Decision, &item.Category, &item.RuleID,
+			&item.Count, &lastSeen, &item.State, &stateChangedAt, &item.Decision, &item.Category, &item.RuleID,
 			&item.Reason, &item.Source, &item.ExperienceVersion, &decidedAt); err != nil {
 			return nil, err
 		}
 		item.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeen)
+		item.StateChangedAt, _ = time.Parse(time.RFC3339Nano, stateChangedAt)
 		item.DecidedAt, _ = time.Parse(time.RFC3339Nano, decidedAt)
 		items = append(items, item)
 	}
@@ -719,6 +883,7 @@ type Aggregator struct {
 	flushFailures     uint64
 	flushedEvents     uint64
 	lastFlushDuration time.Duration
+	lastAcceptedAt    time.Time
 }
 
 type AggregatorStats struct {
@@ -728,6 +893,7 @@ type AggregatorStats struct {
 	FlushFailures       uint64        `json:"flush_failures"`
 	FlushedEvents       uint64        `json:"flushed_events"`
 	LastFlushDuration   time.Duration `json:"-"`
+	LastAcceptedAt      *time.Time    `json:"last_accepted_at,omitempty"`
 }
 
 func NewAggregator(store *Store, maxActive int) *Aggregator {
@@ -780,6 +946,7 @@ func (a *Aggregator) Add(event Event) error {
 		item.Count++
 	}
 	a.pending[key] = item
+	a.lastAcceptedAt = time.Now().UTC()
 	return nil
 }
 
@@ -838,6 +1005,11 @@ func (a *Aggregator) Flush(ctx context.Context) error {
 func (a *Aggregator) Stats() AggregatorStats {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	var lastAcceptedAt *time.Time
+	if !a.lastAcceptedAt.IsZero() {
+		value := a.lastAcceptedAt
+		lastAcceptedAt = &value
+	}
 	return AggregatorStats{
 		PendingFingerprints: len(a.pending),
 		DroppedEvents:       a.dropped,
@@ -845,6 +1017,7 @@ func (a *Aggregator) Stats() AggregatorStats {
 		FlushFailures:       a.flushFailures,
 		FlushedEvents:       a.flushedEvents,
 		LastFlushDuration:   a.lastFlushDuration,
+		LastAcceptedAt:      lastAcceptedAt,
 	}
 }
 
@@ -865,6 +1038,8 @@ func (a *Aggregator) Run(ctx context.Context, interval time.Duration) {
 
 type HandlerOptions struct {
 	BearerToken string
+	MCPHandler  http.Handler
+	BuildInfo   buildinfo.Info
 }
 
 func Handler(store *Store, aggregators ...*Aggregator) http.Handler {
@@ -876,11 +1051,17 @@ func HandlerWithOptions(store *Store, options HandlerOptions, aggregators ...*Ag
 	if len(aggregators) > 0 {
 		aggregator = aggregators[0]
 	}
+	if options.BuildInfo.Version == "" {
+		options.BuildInfo = buildinfo.Current()
+	}
 	mux := http.NewServeMux()
+	if options.MCPHandler != nil {
+		mux.Handle("/mcp", options.MCPHandler)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		stats := aggregator.Stats()
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": "ok",
+			"status": "ok", "build": options.BuildInfo, "storage": store.Health(),
 			"aggregation": map[string]any{
 				"pending_fingerprints":   stats.PendingFingerprints,
 				"dropped_events":         stats.DroppedEvents,
@@ -888,7 +1069,21 @@ func HandlerWithOptions(store *Store, options HandlerOptions, aggregators ...*Ag
 				"flush_failures":         stats.FlushFailures,
 				"flushed_events":         stats.FlushedEvents,
 				"last_flush_duration_ms": float64(stats.LastFlushDuration.Microseconds()) / 1000,
+				"last_accepted_at":       stats.LastAcceptedAt,
 			},
+		})
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ready, reasons := store.Ready(r.Context())
+		status := "ready"
+		code := http.StatusOK
+		if !ready {
+			status = "degraded"
+			code = http.StatusServiceUnavailable
+		}
+		writeJSON(w, code, map[string]any{
+			"status": status, "reasons": reasons, "build": options.BuildInfo,
+			"storage": store.Health(), "aggregation": aggregator.Stats(),
 		})
 	})
 	mux.HandleFunc("POST /v1/events:batch", func(w http.ResponseWriter, r *http.Request) {

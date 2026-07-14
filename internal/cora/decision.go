@@ -47,6 +47,8 @@ type AttentionItem struct {
 	Logger            string    `json:"logger"`
 	Count             int64     `json:"count"`
 	LastSeen          time.Time `json:"last_seen"`
+	State             string    `json:"state"`
+	StateChangedAt    time.Time `json:"state_changed_at"`
 	Decision          string    `json:"decision"`
 	Category          string    `json:"category"`
 	RuleID            string    `json:"rule_id"`

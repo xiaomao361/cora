@@ -99,6 +99,35 @@ func TestAgentRetriesAndCommitsAcknowledgedPosition(t *testing.T) {
 	}
 }
 
+func TestDeliveryStatusShowsRetryAndRecovery(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		if attempts.Add(1) == 1 {
+			writer.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		writer.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	cfg := testConfig("unused.log", t.TempDir()+"/positions.json", server.URL)
+	runtime := newTargetRuntime(cfg)
+	runtime.setRunning(true)
+	runtime.observeFile(100, 50)
+	events := []cora.Event{{ProductLine: "line", Service: "api", ExceptionType: "Timeout"}}
+	if err := sendBatch(context.Background(), server.Client(), cfg, events, runtime); err != nil {
+		t.Fatal(err)
+	}
+	status := runtime.snapshot()
+	if status.RetryAttempts != 1 || status.SentEvents != 1 || status.DeliveryFailures != 0 ||
+		status.DeliveryFailing || status.LastDeliveryAt == nil || status.LastDeliveryAt.IsZero() || status.LagBytes != 50 {
+		t.Fatalf("delivery status=%+v", status)
+	}
+	ready, reasons := runtimeReadiness([]*targetRuntime{runtime})
+	if !ready || len(reasons) != 0 {
+		t.Fatalf("readiness ready=%v reasons=%v", ready, reasons)
+	}
+}
+
 func TestAgentAttachesBoundedBreadcrumbsAndRedactsBeforeUpload(t *testing.T) {
 	received := make(chan cora.Event, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

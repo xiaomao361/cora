@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/claracore/cora/internal/buildinfo"
 )
 
 func TestSchemaMigrationCreatesAndReopensCurrentDatabase(t *testing.T) {
@@ -19,14 +22,14 @@ func TestSchemaMigrationCreatesAndReopensCurrentDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.Close()
-	assertSchemaVersion(t, path, 4)
+	assertSchemaVersion(t, path, 5)
 
 	store, err = OpenStore(path)
 	if err != nil {
 		t.Fatalf("reopen current database: %v", err)
 	}
 	store.Close()
-	assertSchemaVersion(t, path, 4)
+	assertSchemaVersion(t, path, 5)
 }
 
 func TestSchemaMigrationUpgradesUnversionedDatabaseWithoutLosingData(t *testing.T) {
@@ -57,7 +60,7 @@ func TestSchemaMigrationUpgradesUnversionedDatabaseWithoutLosingData(t *testing.
 	if err != nil || len(problems) != 1 || problems[0].Count != 7 {
 		t.Fatalf("legacy data not preserved: problems=%v err=%v", problems, err)
 	}
-	assertSchemaVersion(t, path, 4)
+	assertSchemaVersion(t, path, 5)
 }
 
 func TestSchemaMigrationUpgradesV3IdentityWithoutLosingFacts(t *testing.T) {
@@ -104,7 +107,7 @@ func TestSchemaMigrationUpgradesV3IdentityWithoutLosingFacts(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Service != "orders" {
 		t.Fatalf("migrated decisions=%v err=%v", items, err)
 	}
-	assertSchemaVersion(t, path, 4)
+	assertSchemaVersion(t, path, 5)
 }
 
 func TestSchemaMigrationRejectsNewerDatabase(t *testing.T) {
@@ -124,6 +127,81 @@ func TestSchemaMigrationRejectsNewerDatabase(t *testing.T) {
 	}
 	if err == nil || !strings.Contains(err.Error(), "newer than supported") {
 		t.Fatalf("got error %v, want newer schema rejection", err)
+	}
+}
+
+func TestStoreReadinessTracksFailedAndRecoveredSQLiteWrites(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/cora.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	ready, reasons := store.Ready(context.Background())
+	if !ready || len(reasons) != 0 {
+		t.Fatalf("initial readiness ready=%v reasons=%v", ready, reasons)
+	}
+	event := Event{ProductLine: "line", Service: "api", Environment: "prod", ExceptionType: "Timeout"}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := store.Record(cancelled, event); err == nil {
+		t.Fatal("cancelled write unexpectedly succeeded")
+	}
+	health := store.Health()
+	if health.WriteFailures != 1 || health.LastWriteError == "" {
+		t.Fatalf("failed write health=%+v", health)
+	}
+	ready, reasons = store.Ready(context.Background())
+	if ready || len(reasons) == 0 {
+		t.Fatalf("readiness did not expose latest failure: ready=%v reasons=%v", ready, reasons)
+	}
+	if err := store.Record(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	health = store.Health()
+	if health.SuccessfulWrites != 1 || health.LastSuccessfulWriteAt == nil || health.LastSuccessfulWriteAt.IsZero() {
+		t.Fatalf("recovered write health=%+v", health)
+	}
+	ready, reasons = store.Ready(context.Background())
+	if !ready || len(reasons) != 0 {
+		t.Fatalf("recovered readiness ready=%v reasons=%v", ready, reasons)
+	}
+}
+
+func TestVerifiedSQLiteBackupCanBeRestored(t *testing.T) {
+	directory := t.TempDir()
+	store, err := OpenStore(directory + "/cora.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	event := Event{ProductLine: "line", Service: "api", Environment: "prod", ExceptionType: "Timeout"}
+	if err := store.Record(context.Background(), event); err != nil {
+		t.Fatal(err)
+	}
+	backupPath := directory + "/backups/cora.db"
+	if err := store.Backup(context.Background(), backupPath); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{directory + "/cora.db", backupPath} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("database mode for %s is %o, want 600", path, info.Mode().Perm())
+		}
+	}
+	store.Close()
+	restored, err := OpenStore(backupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer restored.Close()
+	if err := restored.IntegrityCheck(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	problems, err := restored.Problems(context.Background(), "line")
+	if err != nil || len(problems) != 1 {
+		t.Fatalf("restored problems=%v err=%v", problems, err)
 	}
 }
 
@@ -520,7 +598,9 @@ func TestBearerAuthenticationProtectsV1ButLeavesHealthAvailable(t *testing.T) {
 		{name: "missing token", path: "/v1/problems?product_line=line", status: http.StatusUnauthorized},
 		{name: "wrong token", path: "/v1/problems?product_line=line", token: "wrong", status: http.StatusUnauthorized},
 		{name: "valid token", path: "/v1/problems?product_line=line", token: "test-token", status: http.StatusOK},
-		{name: "future mcp is protected", path: "/mcp", status: http.StatusUnauthorized},
+		{name: "readiness is protected", path: "/readyz", status: http.StatusUnauthorized},
+		{name: "valid readiness", path: "/readyz", token: "test-token", status: http.StatusOK},
+		{name: "mcp is protected", path: "/mcp", status: http.StatusUnauthorized},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, test.path, nil)
@@ -533,5 +613,36 @@ func TestBearerAuthenticationProtectsV1ButLeavesHealthAvailable(t *testing.T) {
 				t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 			}
 		})
+	}
+}
+
+func TestServerHealthExposesBuildSchemaAndWriteState(t *testing.T) {
+	store, err := OpenStore(t.TempDir() + "/cora.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Record(context.Background(), Event{
+		ProductLine: "line", Service: "api", Environment: "prod", ExceptionType: "Timeout",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	handler := HandlerWithOptions(store, HandlerOptions{BuildInfo: buildinfo.Info{
+		Version: "v-test", Commit: "abc123", BuildTime: "2026-07-14T00:00:00Z", GoVersion: "go-test",
+	}})
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	var body struct {
+		Build   buildinfo.Info `json:"build"`
+		Storage StoreHealth    `json:"storage"`
+	}
+	if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || body.Build.Version != "v-test" ||
+		body.Storage.SchemaVersion != 5 || body.Storage.SuccessfulWrites != 1 ||
+		body.Storage.LastSuccessfulWriteAt == nil {
+		t.Fatalf("status=%d health=%+v", response.Code, body)
 	}
 }

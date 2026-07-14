@@ -15,23 +15,26 @@ stable framework, and Cora Core is the independently evolving judgment layer.
 | Preserve context without building APM | stacktrace, bounded breadcrumbs, trace/thread fallback, redaction | aligned |
 | Framework should split rather than over-merge | Problem identity includes product line, service, and fingerprint | aligned |
 | Existing logs are the practical first input | one Agent per host tails explicit Logback files | intentional adaptation from the earlier Appender assumption |
-| MCP is the Agent First primary interface | only HTTP ingest/query APIs exist | critical missing surface |
-| Agent handling results become structured cases | feedback schemas exist, but no persistence or write path | critical missing loop |
+| MCP is the Agent First primary interface | same-process authenticated Streamable HTTP MCP exposes list/get/record tools | minimum loop aligned |
+| Agent handling results become structured cases | outcome writes create immutable product-line cases with context snapshots | minimum loop aligned |
 | Core iterates through rules, LLM gray-zone judgment, and case retrieval | only an embedded static rule Pack runs today | critical missing Core stages |
-| Trigger Core on meaningful state changes | Core runs at aggregate flush; no EWMA burst, impact-expansion event, or Problem state machine | incomplete |
+| Trigger Core on meaningful state changes | Problem supports new/acknowledged/resolved/recurring; Core still runs each flush and has no EWMA or impact-expansion event | incomplete |
 | Webhook later, Web UI only for debugging | neither exists | correctly deferred |
 
 The current system is therefore a credible ingestion and deterministic-fact
 foundation, but not yet the complete Agent First product. A technical canary can
 validate collection and storage. A product canary requires the MCP feedback loop.
+Production readiness follows `docs/PRODUCTION_READINESS.md`: short outages and
+imperfect coverage are acceptable, while silent failure and a broken Agent
+feedback loop are not.
 
-## Next product slice: MCP plus cases
+## Implemented product slice: MCP plus cases
 
 Cora Server should host Streamable HTTP MCP in the same process; this does not
 justify another service. The existing bearer token and private listener should
 protect both HTTP and MCP surfaces.
 
-The first MCP slice should stay small:
+The first MCP slice is intentionally small:
 
 1. `cora_list_attention`: list current attention/observe Problems for one
    explicit product line, with decision reason and freshness.
@@ -41,9 +44,11 @@ The first MCP slice should stay small:
    handled, one-line root cause, and one-line action -- against the Problem and
    acting Agent.
 
-The write must create an immutable, product-line-scoped case snapshot. Query and
+The write creates an immutable, product-line-scoped case snapshot. Query and
 write belong to the same MCP server so an Agent can pull, investigate, and close
-the loop without switching products.
+the loop without switching products. Resolved Problems leave the current list;
+a genuinely later event reopens them as `recurring`, while historical backfill
+does not.
 
 ## Core iteration without drift
 
@@ -72,3 +77,5 @@ decisions to retrain and activate themselves without evaluation or rollback.
 - Do not treat static Pack hot reload alone as the Core learning loop.
 - Do not let an `ignore` decision erase facts or hide frequency bursts.
 - Do not expand into APM, full tracing, or notification-channel integrations.
+- Do not turn best-effort attention discovery into a zero-loss or high-availability
+  event platform; finding and closing one worthwhile problem is already value.

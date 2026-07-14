@@ -74,7 +74,16 @@ func TestRunMultiTailsTwoFilesWithSharedPositions(t *testing.T) {
 		}
 		return json.NewDecoder(response.Body).Decode(&body) == nil && body.Targets == 2
 	})
-	response, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/readyz", healthPort))
+	readyURL := fmt.Sprintf("http://127.0.0.1:%d/readyz", healthPort)
+	waitFor(t, func() bool {
+		response, err := http.Get(readyURL)
+		if err != nil {
+			return false
+		}
+		defer response.Body.Close()
+		return response.StatusCode == http.StatusOK
+	})
+	response, err := http.Get(readyURL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +118,25 @@ func TestRunMultiTailsTwoFilesWithSharedPositions(t *testing.T) {
 	waitFor(t, func() bool {
 		loaded, err := loadPositions(positions)
 		return err == nil && len(loaded.Positions) == 2
+	})
+	waitFor(t, func() bool {
+		response, err := http.Get(healthURL)
+		if err != nil {
+			return false
+		}
+		defer response.Body.Close()
+		var body struct {
+			TargetStatuses []TargetStatus `json:"target_statuses"`
+		}
+		if json.NewDecoder(response.Body).Decode(&body) != nil || len(body.TargetStatuses) != 2 {
+			return false
+		}
+		for _, status := range body.TargetStatuses {
+			if !status.Running || !status.Readable || status.SentEvents != 1 || status.LagBytes != 0 {
+				return false
+			}
+		}
+		return true
 	})
 	cancel()
 	if err := <-done; err != nil {

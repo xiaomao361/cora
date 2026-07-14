@@ -79,21 +79,24 @@ func Run(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	return runTarget(ctx, cfg, positions)
+	return runTarget(ctx, cfg, positions, newTargetRuntime(cfg))
 }
 
-func runTarget(ctx context.Context, cfg Config, positions *positionStore) error {
+func runTarget(ctx context.Context, cfg Config, positions *positionStore, runtime *targetRuntime) error {
 	absolutePath, err := filepath.Abs(cfg.Path)
 	if err != nil {
 		return err
 	}
+	runtime.setPath(absolutePath)
+	runtime.setRunning(true)
+	defer runtime.setRunning(false)
 	client := &http.Client{Timeout: cfg.RequestTimeout}
 	breadcrumbs := newBreadcrumbBuffer(defaultBreadcrumbMaxBytes)
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
 		}
-		err := tailOpenFile(ctx, cfg, absolutePath, positions, client, breadcrumbs)
+		err := tailOpenFile(ctx, cfg, absolutePath, positions, client, breadcrumbs, runtime)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -103,6 +106,7 @@ func runTarget(ctx context.Context, cfg Config, positions *positionStore) error 
 		if err == nil {
 			return nil
 		}
+		runtime.setUnavailable(err)
 		if !os.IsNotExist(err) {
 			return err
 		}
@@ -112,7 +116,7 @@ func runTarget(ctx context.Context, cfg Config, positions *positionStore) error 
 	}
 }
 
-func tailOpenFile(ctx context.Context, cfg Config, path string, positions *positionStore, client *http.Client, breadcrumbs *breadcrumbBuffer) error {
+func tailOpenFile(ctx context.Context, cfg Config, path string, positions *positionStore, client *http.Client, breadcrumbs *breadcrumbBuffer, runtime *targetRuntime) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -137,27 +141,34 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 	if err := positions.put(path, currentPosition); err != nil {
 		return err
 	}
+	runtime.observeFile(info.Size(), offset)
 
 	reader := bufio.NewReader(file)
 	var record strings.Builder
 	lastRead := time.Now()
 	pending := make([]queuedEvent, 0, cfg.BatchSize)
 	processedEnd := offset
+	recordTruncated := false
 
 	finalize := func(end int64) {
 		if record.Len() == 0 {
 			processedEnd = end
 			return
 		}
-		if parsed, ok := parseLogbackRecord(record.String(), cfg); ok {
-			if event, isError := eventFromRecord(parsed, path, cfg); isError {
-				event.Breadcrumbs = breadcrumbs.selectFor(parsed)
+		parsedRecord, parsed := parseLogbackRecord(record.String(), cfg)
+		isError := false
+		if parsed {
+			if event, eventIsError := eventFromRecord(parsedRecord, path, cfg); eventIsError {
+				isError = true
+				event.Breadcrumbs = breadcrumbs.selectFor(parsedRecord)
 				pending = append(pending, queuedEvent{event: event, end: end})
 			}
-			breadcrumbs.add(parsed)
+			breadcrumbs.add(parsedRecord)
 		}
+		runtime.readRecord(parsed, isError, recordTruncated)
 		processedEnd = end
 		record.Reset()
+		recordTruncated = false
 	}
 	flush := func() error {
 		for len(pending) > 0 {
@@ -165,7 +176,7 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 			if err != nil {
 				return err
 			}
-			if err := sendBatch(ctx, client, cfg, events); err != nil {
+			if err := sendBatch(ctx, client, cfg, events, runtime); err != nil {
 				return err
 			}
 			committed := pending[count-1].end
@@ -173,12 +184,14 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 			if err := positions.put(path, currentPosition); err != nil {
 				return err
 			}
+			runtime.observeFile(max(offset, committed), committed)
 			pending = pending[count:]
 		}
 		currentPosition = position{Offset: processedEnd, FileID: identity}
 		if err := positions.put(path, currentPosition); err != nil {
 			return err
 		}
+		runtime.observeFile(max(offset, processedEnd), processedEnd)
 		pending = pending[:0]
 		return nil
 	}
@@ -192,9 +205,9 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 			trimmed := strings.TrimRight(line, "\r\n")
 			if startsRecord(trimmed) {
 				finalize(lineStart)
-				appendBounded(&record, trimmed, cfg.MaxEventBytes, false)
+				recordTruncated = appendBounded(&record, trimmed, cfg.MaxEventBytes, false)
 			} else if record.Len() > 0 {
-				appendBounded(&record, trimmed, cfg.MaxEventBytes, true)
+				recordTruncated = appendBounded(&record, trimmed, cfg.MaxEventBytes, true) || recordTruncated
 			} else {
 				processedEnd = offset
 			}
@@ -221,6 +234,9 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 
 		pathInfo, statErr := os.Stat(path)
 		openInfo, openErr := file.Stat()
+		if statErr == nil {
+			runtime.observeFile(pathInfo.Size(), currentPosition.Offset)
+		}
 		if statErr == nil && openErr == nil && (!os.SameFile(openInfo, pathInfo) || pathInfo.Size() < offset) {
 			finalize(offset)
 			if err := flush(); err != nil {
@@ -237,22 +253,24 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 	}
 }
 
-func appendBounded(record *strings.Builder, line string, maximum int, newline bool) {
+func appendBounded(record *strings.Builder, line string, maximum int, newline bool) bool {
 	remaining := maximum - record.Len()
 	if remaining <= 0 {
-		return
+		return true
 	}
 	if newline {
 		record.WriteByte('\n')
 		remaining--
 	}
 	if remaining <= 0 {
-		return
+		return true
 	}
+	truncated := len(line) > remaining
 	if len(line) > remaining {
 		line = line[:remaining]
 	}
 	record.WriteString(line)
+	return truncated
 }
 
 func nextBatch(pending []queuedEvent, maximumCount, maximumBytes int) (int, []cora.Event, error) {
@@ -281,7 +299,7 @@ func nextBatch(pending []queuedEvent, maximumCount, maximumBytes int) (int, []co
 	return 0, nil, errors.New("empty batch")
 }
 
-func sendBatch(ctx context.Context, client *http.Client, cfg Config, events []cora.Event) error {
+func sendBatch(ctx context.Context, client *http.Client, cfg Config, events []cora.Event, runtime *targetRuntime) error {
 	for index := range events {
 		events[index] = redactEvent(events[index])
 	}
@@ -309,12 +327,17 @@ func sendBatch(ctx context.Context, client *http.Client, cfg Config, events []co
 			response.Body.Close()
 		}
 		if err == nil && status >= 200 && status < 300 {
+			runtime.delivered(len(events))
 			return nil
 		}
 		retryable := err != nil || status == http.StatusTooManyRequests || status >= 500
+		attemptErr := fmt.Errorf("delivery attempt %d failed: status=%d error=%v", attempt+1, status, err)
 		if !retryable || attempt >= cfg.MaxRetries {
-			return fmt.Errorf("send batch failed after %d attempts: status=%d error=%v", attempt+1, status, err)
+			finalErr := fmt.Errorf("send batch failed after %d attempts: status=%d error=%v", attempt+1, status, err)
+			runtime.deliveryFailed(finalErr)
+			return finalErr
 		}
+		runtime.retry(attemptErr)
 		if err := wait(ctx, backoff); err != nil {
 			return err
 		}

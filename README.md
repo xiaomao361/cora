@@ -11,7 +11,8 @@ floods into Problems, and applies explainable product-line decisions.
   reconstructs multiline ERROR events, checkpoints acknowledged offsets, and
   sends bounded batches over the internal network.
 - **Cora Server** receives events, fingerprints and aggregates them, persists
-  Problems, trends, and decisions in SQLite, and exposes HTTP query APIs.
+  Problems, trends, decisions, and immutable cases in SQLite, and exposes HTTP
+  ingest/query APIs plus an Agent-facing Streamable HTTP MCP endpoint.
 - **Cora Core** is the deterministic decision engine embedded in the Server.
   It loads versioned product-line experience from a **Cora Pack**.
 
@@ -38,11 +39,22 @@ business-development participation that is not currently available.
 - SQLite schema migrations, Problems, trends, node trends, and Cora decisions.
 - Product-line isolation and a versioned `gbjk-zhifu` Cora Pack with 130
   reviewed rules.
+- Problem lifecycle states: `new`, `acknowledged`, `resolved`, and `recurring`.
+- Bearer-protected `/mcp` with `cora_list_attention`, `cora_get_problem`, and
+  `cora_record_outcome`; outcome writes preserve an immutable context snapshot.
 - Server `/healthz`; Agent `/healthz` and `/readyz` in YAML mode.
+- Server `/readyz` verifies SQLite reachability and unrecovered write failure;
+  Agent readiness reports per-target readability, worker state, delivery
+  failure, acknowledged offset, lag, parse/truncation, retry, and send facts.
+- Both binaries and health responses expose version, commit, build time, and Go
+  version; Server storage status also exposes SQLite schema v5.
+- Verified SQLite backup/check commands and a read-only `cora-canary` binary
+  cover live HTTP plus MCP acceptance.
 
-Not implemented yet: event-ID deduplication, alerts, MCP, or a web UI. The
-current Cora Core still loads an embedded static Pack at process start; an
-iterative candidate/evaluation/promotion loop is not implemented yet.
+Not implemented yet: event-ID deduplication, alerts, case top-k retrieval in
+Core, LLM gray-zone judgment, or a web UI. The current Cora Core still loads an
+embedded static Pack at process start; outcome cases now accumulate, but an
+iterative retrieval/candidate/evaluation/promotion loop is not implemented yet.
 
 ## Run locally
 
@@ -71,7 +83,12 @@ The ingest and query APIs are:
 - `GET /v1/trends?product_line=<line>&service=<service>&fingerprint=<fingerprint>`
 - `GET /v1/node-occurrences?product_line=<line>&service=<service>&fingerprint=<fingerprint>`
 - `GET /v1/node-trends?product_line=<line>&service=<service>&fingerprint=<fingerprint>[&node=<node>]`
+- `POST /mcp` (Streamable HTTP MCP; use the same bearer token as `/v1/*`)
 - `GET /healthz`
+
+The MCP tools always require an explicit `product_line`; problem detail and
+outcome writes additionally require `service` and `fingerprint`, so an Agent
+cannot silently mix product-line cases.
 
 ## Validate
 
@@ -80,6 +97,12 @@ go test ./...
 go test -race ./...
 go vet ./...
 git diff --check
+```
+
+After committing a release boundary, build identified Linux artifacts with:
+
+```sh
+deploy/scripts/build-release.sh v0.1.0
 ```
 
 Run the reproducible Cora Pack shadow evaluation:
@@ -101,6 +124,8 @@ go run ./cmd/cora-eval \
   limits.
 - [`docs/VISION_ALIGNMENT.md`](docs/VISION_ALIGNMENT.md): original vision versus
   current truth, including the required MCP and case loop.
+- [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md): best-effort v0
+  production contract, explicit non-goals, and canary gates.
 - [`deploy/README.md`](deploy/README.md): Linux build, Supervisor canary,
   backup, and rollback.
 - [`docs/PERFORMANCE_BASELINE.md`](docs/PERFORMANCE_BASELINE.md): reproducible

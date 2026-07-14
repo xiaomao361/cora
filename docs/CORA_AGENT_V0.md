@@ -119,6 +119,14 @@ go run ./cmd/cora-agent -config.file /etc/cora-agent/config.yml
 
 The original single-file flags remain available for local smoke tests.
 
+YAML mode reports one `target_statuses[]` entry per configured file. It includes
+`running`, `readable`, file size, acknowledged offset, byte lag, parsed/error/
+truncated counts, sent events, retries, final delivery failures, and the latest
+read/delivery/failure times. `/healthz` remains liveness. `/readyz` returns 503
+when a worker is not running, a file is unreadable, or delivery is currently
+failing. Lag and parse/truncation remain visible without imposing an arbitrary
+production threshold before the canary has real baseline data.
+
 For an unseen file, the default is to start at its current end so installing
 the agent cannot unexpectedly replay months of logs. Use `-from-start` only for
 a controlled test or historical import.
@@ -161,8 +169,9 @@ file's current end.
 A real-process smoke used one YAML file with `gb-auth` and `gb-order` targets,
 two production-format files, one shared positions file, and a local Cora:
 
-- Agent health: `status=ok`, `targets=2`.
-- Agent readiness: `status=ready`, `readable_targets=2`.
+- Agent health: `status=ok`, `targets=2`, with two target status records.
+- Agent readiness: `status=ready`, `readable_targets=2`, with delivery healthy
+  and acknowledged lag returning to zero.
 - Cora Problems: two, services `gb-auth` and `gb-order`.
 - Position entries: two independent acknowledged offsets.
 - Cora: both `observe / cora.default.untrained-product-line`, because the

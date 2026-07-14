@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-case.v1.schema.json",
+  "title": "Cora Case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "problem_id",
+    "product_line",
+    "service",
+    "fingerprint",
+    "actor",
+    "is_real_problem",
+    "handled",
+    "root_cause",
+    "action",
+    "prior_state",
+    "resulting_state",
+    "context_snapshot",
+    "recorded_at"
+  ],
+  "properties": {
+    "id": { "type": "integer", "minimum": 1 },
+    "problem_id": { "type": "integer", "minimum": 1 },
+    "product_line": { "type": "string", "minLength": 1 },
+    "service": { "type": "string", "minLength": 1 },
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "actor": { "type": "string", "minLength": 1 },
+    "is_real_problem": { "type": "boolean" },
+    "handled": { "type": "boolean" },
+    "root_cause": { "type": "string", "minLength": 1 },
+    "action": { "type": "string", "minLength": 1 },
+    "prior_state": {
+      "type": "string",
+      "enum": ["new", "acknowledged", "resolved", "recurring"]
+    },
+    "resulting_state": {
+      "type": "string",
+      "enum": ["acknowledged", "resolved"]
+    },
+    "context_snapshot": {
+      "type": "object",
+      "required": ["problem", "decision"],
+      "properties": {
+        "problem": { "type": "object" },
+        "decision": { "type": "object" }
+      }
+    },
+    "recorded_at": { "type": "string", "format": "date-time" }
+  }
+}

@@ -1,6 +1,8 @@
 /cora-server
 /cora-agent
 /cora-eval
+/cora-canary
+/dist/
 .DS_Store
 *.db
 *.db-shm
