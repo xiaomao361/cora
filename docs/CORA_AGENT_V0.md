@@ -36,11 +36,11 @@ server:
   grpc_listen_port: 0
 
 positions:
-  filename: /var/lib/cora-agent/positions.yml
+  filename: /home/cora/data/agent/positions.json
 
 clients:
   - url: http://cora.internal:8080/v1/events:batch
-    bearer_token_file: /etc/cora/auth.token
+    bearer_token_file: /home/cora/config/auth.token
 
 defaults:
   product_line: qikang-zhifu
@@ -114,7 +114,7 @@ Start Cora, then the agent using YAML:
 ```sh
 go run ./cmd/cora-server -allow-unauthenticated -db /tmp/cora.db -flush-interval 1s
 
-go run ./cmd/cora-agent -config.file /etc/cora-agent/config.yml
+go run ./cmd/cora-agent -config.file /home/cora/config/agent.yml
 ```
 
 The original single-file flags remain available for local smoke tests.

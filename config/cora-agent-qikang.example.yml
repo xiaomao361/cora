@@ -4,11 +4,11 @@ server:
   grpc_listen_port: 0
 
 positions:
-  filename: /var/lib/cora-agent/qikang-positions.yml
+  filename: /home/cora/data/agent/qikang-positions.json
 
 clients:
   - url: http://cora.internal:8080/v1/events:batch
-    bearer_token_file: /etc/cora/auth.token
+    bearer_token_file: /home/cora/config/auth.token
 
 defaults:
   product_line: qikang-zhifu

@@ -124,7 +124,7 @@ func TestCanaryExampleDefinesAuthenticatedNodeBoundary(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte("canary-test-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	data = []byte(strings.Replace(string(data), "/etc/cora/auth.token", tokenPath, 1))
+	data = []byte(strings.Replace(string(data), "/home/cora/config/auth.token", tokenPath, 1))
 	configPath := filepath.Join(t.TempDir(), "agent.yml")
 	if err := os.WriteFile(configPath, data, 0o600); err != nil {
 		t.Fatal(err)

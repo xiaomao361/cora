@@ -4,11 +4,11 @@ server:
   grpc_listen_port: 0
 
 positions:
-  filename: /var/lib/cora-agent/positions.yml
+  filename: /home/cora/data/agent/positions.json
 
 clients:
   - url: http://10.0.0.10:8080/v1/events:batch
-    bearer_token_file: /etc/cora/auth.token
+    bearer_token_file: /home/cora/config/auth.token
 
 defaults:
   product_line: gbjk-zhifu
