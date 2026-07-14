@@ -46,7 +46,21 @@ type ProblemDetail struct {
 	TrendPoints     []TrendPoint     `json:"trend_points"`
 	NodeOccurrences []NodeOccurrence `json:"node_occurrences"`
 	NodeTrendPoints []NodeTrendPoint `json:"node_trend_points"`
+	RelatedProblems []RelatedProblem `json:"related_problems"`
 	Cases           []ProblemCase    `json:"cases"`
+}
+
+type RelatedProblem struct {
+	ProblemID      int64     `json:"problem_id"`
+	Service        string    `json:"service"`
+	Fingerprint    string    `json:"fingerprint"`
+	State          string    `json:"state"`
+	Decision       string    `json:"decision"`
+	Category       string    `json:"category"`
+	Count          int64     `json:"count"`
+	FirstSeen      time.Time `json:"first_seen"`
+	LastSeen       time.Time `json:"last_seen"`
+	SharedTraceIDs []string  `json:"shared_trace_ids"`
 }
 
 type Outcome struct {
@@ -155,10 +169,90 @@ func (s *Store) GetProblem(ctx context.Context, productLine, service, fingerprin
 	if detail.NodeTrendPoints, err = s.NodeTrendPoints(ctx, productLine, service, fingerprint, ""); err != nil {
 		return ProblemDetail{}, err
 	}
+	if detail.RelatedProblems, err = s.relatedProblems(ctx, detail.Problem); err != nil {
+		return ProblemDetail{}, err
+	}
 	if detail.Cases, err = s.ProblemCases(ctx, productLine, service, fingerprint); err != nil {
 		return ProblemDetail{}, err
 	}
 	return detail, nil
+}
+
+func (s *Store) relatedProblems(ctx context.Context, problem Problem) ([]RelatedProblem, error) {
+	targetTraceIDs := problemTraceIDs(problem)
+	if len(targetTraceIDs) == 0 {
+		return []RelatedProblem{}, nil
+	}
+	traceA := targetTraceIDs[0]
+	traceB := traceA
+	if len(targetTraceIDs) > 1 {
+		traceB = targetTraceIDs[1]
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT p.id, p.service, p.fingerprint, p.state, p.count, p.first_seen,
+		       p.last_seen, p.first_sample, p.latest_sample, d.decision, d.category
+		FROM problems p
+		JOIN cora_decisions d ON d.product_line = p.product_line AND d.service = p.service
+		 AND d.fingerprint = p.fingerprint
+		WHERE p.product_line = ?
+		  AND NOT (p.service = ? AND p.fingerprint = ?)
+		  AND (json_extract(p.first_sample, '$.trace_id') IN (?, ?)
+		       OR json_extract(p.latest_sample, '$.trace_id') IN (?, ?))
+		ORDER BY p.last_seen DESC, p.id DESC`, problem.ProductLine, problem.Service,
+		problem.Fingerprint, traceA, traceB, traceA, traceB)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	related := []RelatedProblem{}
+	for rows.Next() {
+		var item RelatedProblem
+		var firstSeen, lastSeen, firstSample, latestSample string
+		if err := rows.Scan(&item.ProblemID, &item.Service, &item.Fingerprint,
+			&item.State, &item.Count, &firstSeen, &lastSeen, &firstSample,
+			&latestSample, &item.Decision, &item.Category); err != nil {
+			return nil, err
+		}
+		item.FirstSeen, _ = time.Parse(time.RFC3339Nano, firstSeen)
+		item.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeen)
+		candidateTraceIDs := sampleTraceIDs(firstSample, latestSample)
+		for _, traceID := range targetTraceIDs {
+			if candidateTraceIDs[traceID] {
+				item.SharedTraceIDs = append(item.SharedTraceIDs, traceID)
+			}
+		}
+		related = append(related, item)
+	}
+	return related, rows.Err()
+}
+
+func problemTraceIDs(problem Problem) []string {
+	traceIDs := sampleTraceIDs(problem.FirstSample, problem.LatestSample)
+	result := make([]string, 0, len(traceIDs))
+	for _, sample := range []string{problem.FirstSample, problem.LatestSample} {
+		var event Event
+		if json.Unmarshal([]byte(sample), &event) == nil && event.TraceID != "" && traceIDs[event.TraceID] {
+			alreadyAdded := false
+			for _, existing := range result {
+				alreadyAdded = alreadyAdded || existing == event.TraceID
+			}
+			if !alreadyAdded {
+				result = append(result, event.TraceID)
+			}
+		}
+	}
+	return result
+}
+
+func sampleTraceIDs(samples ...string) map[string]bool {
+	traceIDs := map[string]bool{}
+	for _, sample := range samples {
+		var event Event
+		if json.Unmarshal([]byte(sample), &event) == nil && event.TraceID != "" {
+			traceIDs[event.TraceID] = true
+		}
+	}
+	return traceIDs
 }
 
 func (s *Store) ProblemCases(ctx context.Context, productLine, service, fingerprint string) ([]ProblemCase, error) {

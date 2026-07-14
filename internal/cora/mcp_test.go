@@ -3,12 +3,99 @@ package cora
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
+
+func TestMCPProblemDetailRelatesSharedTracesAndBoundsBreadcrumbs(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenStore(t.TempDir() + "/cora.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	breadcrumbs := make([]Breadcrumb, 12)
+	for index := range breadcrumbs {
+		breadcrumbs[index] = Breadcrumb{
+			Level: "INFO", Message: fmt.Sprintf("breadcrumb-%02d %s", index, strings.Repeat("上下文", 400)),
+		}
+	}
+	primary := Event{
+		ProductLine: "payments", Service: "checkout", Environment: "prod", TraceID: "trace-shared",
+		Logger: "com.example.Checkout", ExceptionType: "CheckoutFailure", Message: "checkout failed",
+		Stacktrace: "at com.example.Checkout.submit(Checkout.java:41)", Breadcrumbs: breadcrumbs,
+	}
+	related := Event{
+		ProductLine: "payments", Service: "inventory", Environment: "prod", TraceID: "trace-shared",
+		Logger: "com.example.Inventory", ExceptionType: "InventoryFailure", Message: "inventory failed",
+		Stacktrace: "at com.example.Inventory.reserve(Inventory.java:51)",
+	}
+	unrelated := related
+	unrelated.Service = "pricing"
+	unrelated.TraceID = "trace-other"
+	unrelated.Logger = "com.example.Pricing"
+	unrelated.Stacktrace = "at com.example.Pricing.lookup(Pricing.java:61)"
+	for _, event := range []Event{primary, related, unrelated} {
+		if err := store.Record(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	httpServer := httptest.NewServer(NewMCPHandler(store))
+	defer httpServer.Close()
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "cora-test", Version: "v0"}, nil)
+	session, err := client.Connect(ctx, &mcpsdk.StreamableClientTransport{
+		Endpoint: httpServer.URL, DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	result := callMCPTool(t, ctx, session, "cora_get_problem", map[string]any{
+		"product_line": "payments", "service": "checkout", "fingerprint": Fingerprint(primary),
+	})
+	var output getProblemOutput
+	decodeStructuredOutput(t, result, &output)
+	if len(output.Detail.RelatedProblems) != 1 ||
+		output.Detail.RelatedProblems[0].Service != "inventory" ||
+		len(output.Detail.RelatedProblems[0].SharedTraceIDs) != 1 ||
+		output.Detail.RelatedProblems[0].SharedTraceIDs[0] != "trace-shared" {
+		t.Fatalf("related problems=%+v", output.Detail.RelatedProblems)
+	}
+	var sample Event
+	if err := json.Unmarshal([]byte(output.Detail.Problem.FirstSample), &sample); err != nil {
+		t.Fatal(err)
+	}
+	if len(sample.Breadcrumbs) != mcpBreadcrumbLimit {
+		t.Fatalf("MCP breadcrumbs=%d, want %d", len(sample.Breadcrumbs), mcpBreadcrumbLimit)
+	}
+	if !strings.HasPrefix(sample.Breadcrumbs[0].Message, "breadcrumb-00") ||
+		!strings.HasPrefix(sample.Breadcrumbs[len(sample.Breadcrumbs)-1].Message, "breadcrumb-11") {
+		t.Fatalf("bounded breadcrumbs lost chronological edges: %+v", sample.Breadcrumbs)
+	}
+	for _, breadcrumb := range sample.Breadcrumbs {
+		if len(breadcrumb.Message) > mcpBreadcrumbMessageBytes || !strings.HasSuffix(breadcrumb.Message, "[truncated]") {
+			t.Fatalf("unbounded MCP breadcrumb bytes=%d suffix=%q", len(breadcrumb.Message), breadcrumb.Message[len(breadcrumb.Message)-20:])
+		}
+	}
+	stored, err := store.GetProblem(ctx, "payments", "checkout", Fingerprint(primary))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(stored.Problem.FirstSample), &sample); err != nil {
+		t.Fatal(err)
+	}
+	if len(sample.Breadcrumbs) != len(breadcrumbs) {
+		t.Fatalf("stored breadcrumbs=%d, want original %d", len(sample.Breadcrumbs), len(breadcrumbs))
+	}
+}
 
 type bearerTransport struct {
 	token string

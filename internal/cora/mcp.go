@@ -3,12 +3,19 @@ package cora
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/claracore/cora/internal/buildinfo"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+const (
+	mcpBreadcrumbLimit        = 8
+	mcpBreadcrumbMessageBytes = 768
 )
 
 type listAttentionInput struct {
@@ -67,11 +74,14 @@ func NewMCPHandler(store *Store) http.Handler {
 	})
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "cora_get_problem",
-		Description: "Get one service-scoped problem with samples, trends, nodes, decision, and immutable cases.",
+		Description: "Get one service-scoped problem with bounded samples, trends, nodes, related problems sharing representative trace IDs, decision, and immutable cases.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input getProblemInput) (*mcpsdk.CallToolResult, getProblemOutput, error) {
 		detail, err := store.GetProblem(ctx, input.ProductLine, input.Service, input.Fingerprint)
 		if errors.Is(err, sql.ErrNoRows) {
 			err = fmt.Errorf("problem not found in product line %q and service %q", input.ProductLine, input.Service)
+		}
+		if err == nil {
+			detail = boundProblemDetailForMCP(detail)
 		}
 		return nil, getProblemOutput{Detail: detail}, err
 	})
@@ -101,4 +111,63 @@ func NewMCPHandler(store *Store) http.Handler {
 		return server
 	}, &mcpsdk.StreamableHTTPOptions{Stateless: true, JSONResponse: true})
 	return http.NewCrossOriginProtection().Handler(handler)
+}
+
+func boundProblemDetailForMCP(detail ProblemDetail) ProblemDetail {
+	detail.Problem = boundProblemForMCP(detail.Problem)
+	for index := range detail.Cases {
+		detail.Cases[index].ContextSnapshot.Problem = boundProblemForMCP(
+			detail.Cases[index].ContextSnapshot.Problem,
+		)
+	}
+	return detail
+}
+
+func boundProblemForMCP(problem Problem) Problem {
+	problem.FirstSample = boundSampleForMCP(problem.FirstSample)
+	problem.LatestSample = boundSampleForMCP(problem.LatestSample)
+	return problem
+}
+
+func boundSampleForMCP(sample string) string {
+	var event Event
+	if err := json.Unmarshal([]byte(sample), &event); err != nil {
+		return sample
+	}
+	if len(event.Breadcrumbs) > mcpBreadcrumbLimit {
+		bounded := make([]Breadcrumb, 0, mcpBreadcrumbLimit)
+		bounded = append(bounded, event.Breadcrumbs[:2]...)
+		bounded = append(bounded, event.Breadcrumbs[len(event.Breadcrumbs)-6:]...)
+		event.Breadcrumbs = bounded
+	}
+	for index := range event.Breadcrumbs {
+		event.Breadcrumbs[index].Message = truncateMCPText(
+			event.Breadcrumbs[index].Message,
+			mcpBreadcrumbMessageBytes,
+		)
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		return sample
+	}
+	return string(encoded)
+}
+
+func truncateMCPText(value string, maximumBytes int) string {
+	if len(value) <= maximumBytes {
+		return value
+	}
+	const marker = " … [truncated]"
+	limit := maximumBytes - len(marker)
+	if limit <= 0 {
+		return marker[:maximumBytes]
+	}
+	var builder strings.Builder
+	for _, character := range value {
+		if builder.Len()+len(string(character)) > limit {
+			break
+		}
+		builder.WriteRune(character)
+	}
+	return builder.String() + marker
 }

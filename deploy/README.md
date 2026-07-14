@@ -42,8 +42,8 @@ version, commit, and UTC build time into all three binaries and writes checksums
 go test ./...
 go test -race ./...
 go vet ./...
-deploy/scripts/build-release.sh v0.1.0-rc2
-cat dist/v0.1.0-rc2/SHA256SUMS
+deploy/scripts/build-release.sh v0.1.0-rc3
+cat dist/v0.1.0-rc3/SHA256SUMS
 ```
 
 Copy only the binary needed by each host directly into `/home/cora`: Server
