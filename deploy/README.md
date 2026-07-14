@@ -42,8 +42,8 @@ version, commit, and UTC build time into all three binaries and writes checksums
 go test ./...
 go test -race ./...
 go vet ./...
-deploy/scripts/build-release.sh v0.1.0
-cat dist/v0.1.0/SHA256SUMS
+deploy/scripts/build-release.sh v0.1.0-rc2
+cat dist/v0.1.0-rc2/SHA256SUMS
 ```
 
 Copy only the binary needed by each host directly into `/home/cora`: Server
@@ -148,8 +148,10 @@ Agent advances its positions file, Cora creates the expected service Problem,
 and Server health reports zero dropped events, no unrecovered SQLite write
 failure, the expected schema/build identity, and current write timestamps. Before
 expanding the canary, use a real MCP client to call `cora_list_attention`,
-`cora_get_problem`, and `cora_record_outcome`, then confirm the resolved Problem
-disappears from the current list and a later matching error returns as recurring.
+`cora_get_problem`, `cora_record_outcome`, and `cora_export_cases`. Confirm the
+resolved Problem disappears from the current list, a later matching error
+returns as recurring, and two export pages retain the same `snapshot_id` and
+`snapshot_through_case_id` while new outcomes are deferred to the next snapshot.
 
 ## Restore drill and rollback
 

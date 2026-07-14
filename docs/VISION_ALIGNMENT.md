@@ -15,7 +15,7 @@ stable framework, and Cora Core is the independently evolving judgment layer.
 | Preserve context without building APM | stacktrace, bounded breadcrumbs, trace/thread fallback, redaction | aligned |
 | Framework should split rather than over-merge | Problem identity includes product line, service, and fingerprint | aligned |
 | Existing logs are the practical first input | one Agent per host tails explicit Logback files | intentional adaptation from the earlier Appender assumption |
-| MCP is the Agent First primary interface | same-process authenticated Streamable HTTP MCP exposes list/get/record tools | minimum loop aligned |
+| MCP is the Agent First primary interface | same-process authenticated Streamable HTTP MCP exposes list/get/record/export tools | minimum loop aligned |
 | Agent handling results become structured cases | outcome writes create immutable product-line cases with context snapshots | minimum loop aligned |
 | Core iterates through rules, LLM gray-zone judgment, and case retrieval | only an embedded static rule Pack runs today | critical missing Core stages |
 | Trigger Core on meaningful state changes | Problem supports new/acknowledged/resolved/recurring; Core still runs each flush and has no EWMA or impact-expansion event | incomplete |
@@ -43,6 +43,8 @@ The first MCP slice is intentionally small:
 3. `cora_record_outcome`: write the original four-field result -- real problem,
    handled, one-line root cause, and one-line action -- against the Problem and
    acting Agent.
+4. `cora_export_cases`: freeze and page one product line's immutable cases so a
+   local training/evaluation workflow can persist a reproducible snapshot.
 
 The write creates an immutable, product-line-scoped case snapshot. Query and
 write belong to the same MCP server so an Agent can pull, investigate, and close

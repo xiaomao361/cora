@@ -135,6 +135,71 @@ func TestMCPAttentionInvestigationOutcomeAndRecurrenceLoop(t *testing.T) {
 		getOutput.Detail.Cases[0].RootCause != "checkout retained oversized payloads" {
 		t.Fatalf("recurring detail=%+v", getOutput.Detail)
 	}
+
+	event2 := event
+	event2.Logger = "com.example.CheckoutInventory"
+	event2.Message = "inventory reservation failed"
+	event2.Stacktrace = "at com.example.CheckoutInventory.reserve(CheckoutInventory.java:51)"
+	if err := store.Record(ctx, event2); err != nil {
+		t.Fatal(err)
+	}
+	case2, err := store.RecordOutcome(ctx, Outcome{
+		ProductLine: "payments", Service: "checkout", Fingerprint: Fingerprint(event2),
+		Actor: "codex", IsRealProblem: true, Handled: false,
+		RootCause: "inventory dependency timed out", Action: "investigate dependency latency",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	firstExportResult := callMCPTool(t, ctx, session, "cora_export_cases", map[string]any{
+		"product_line": "payments", "limit": 1,
+	})
+	var firstExport exportCasesOutput
+	decodeStructuredOutput(t, firstExportResult, &firstExport)
+	if len(firstExport.Export.Cases) != 1 || !firstExport.Export.HasMore ||
+		firstExport.Export.SnapshotThroughCaseID != case2.ID || firstExport.Export.PageSHA256 == "" {
+		t.Fatalf("first export=%+v", firstExport.Export)
+	}
+
+	event3 := event
+	event3.Logger = "com.example.CheckoutPricing"
+	event3.Message = "pricing lookup failed"
+	event3.Stacktrace = "at com.example.CheckoutPricing.lookup(CheckoutPricing.java:61)"
+	if err := store.Record(ctx, event3); err != nil {
+		t.Fatal(err)
+	}
+	case3, err := store.RecordOutcome(ctx, Outcome{
+		ProductLine: "payments", Service: "checkout", Fingerprint: Fingerprint(event3),
+		Actor: "codex", IsRealProblem: true, Handled: true,
+		RootCause: "pricing cache was unavailable", Action: "restored pricing cache",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secondExportResult := callMCPTool(t, ctx, session, "cora_export_cases", map[string]any{
+		"product_line":    "payments",
+		"after_case_id":   firstExport.Export.NextAfterCaseID,
+		"through_case_id": firstExport.Export.SnapshotThroughCaseID,
+		"limit":           1,
+	})
+	var secondExport exportCasesOutput
+	decodeStructuredOutput(t, secondExportResult, &secondExport)
+	if len(secondExport.Export.Cases) != 1 || secondExport.Export.HasMore ||
+		secondExport.Export.Cases[0].ID != case2.ID || secondExport.Export.Cases[0].ID == case3.ID ||
+		secondExport.Export.SnapshotID != firstExport.Export.SnapshotID {
+		t.Fatalf("second export=%+v", secondExport.Export)
+	}
+
+	latestExportResult := callMCPTool(t, ctx, session, "cora_export_cases", map[string]any{
+		"product_line": "payments", "limit": 200,
+	})
+	var latestExport exportCasesOutput
+	decodeStructuredOutput(t, latestExportResult, &latestExport)
+	if len(latestExport.Export.Cases) != 3 || latestExport.Export.SnapshotThroughCaseID != case3.ID {
+		t.Fatalf("latest export=%+v", latestExport.Export)
+	}
 }
 
 func callMCPTool(t *testing.T, ctx context.Context, session *mcpsdk.ClientSession, name string, arguments map[string]any) *mcpsdk.CallToolResult {

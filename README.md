@@ -40,8 +40,10 @@ business-development participation that is not currently available.
 - Product-line isolation and a versioned `gbjk-zhifu` Cora Pack with 130
   reviewed rules.
 - Problem lifecycle states: `new`, `acknowledged`, `resolved`, and `recurring`.
-- Bearer-protected `/mcp` with `cora_list_attention`, `cora_get_problem`, and
-  `cora_record_outcome`; outcome writes preserve an immutable context snapshot.
+- Bearer-protected `/mcp` with `cora_list_attention`, `cora_get_problem`,
+  `cora_record_outcome`, and stable paginated `cora_export_cases`; outcome
+  writes preserve an immutable context snapshot and exports freeze a high-water
+  case ID for reproducible local snapshots.
 - Server `/healthz`; Agent `/healthz` and `/readyz` in YAML mode.
 - Server `/readyz` verifies SQLite reachability and unrecovered write failure;
   Agent readiness reports per-target readability, worker state, delivery
@@ -97,7 +99,10 @@ The ingest and query APIs are:
 
 The MCP tools always require an explicit `product_line`; problem detail and
 outcome writes additionally require `service` and `fingerprint`, so an Agent
-cannot silently mix product-line cases.
+cannot silently mix product-line cases. Case export starts with zero cursors,
+then reuses the returned `snapshot_through_case_id` and `next_after_case_id`
+until `has_more=false`; each page includes a SHA-256 over its canonical case
+array for local persistence checks.
 
 ## Validate
 
@@ -111,7 +116,7 @@ git diff --check
 After committing a release boundary, build identified Linux artifacts with:
 
 ```sh
-deploy/scripts/build-release.sh v0.1.0
+deploy/scripts/build-release.sh v0.1.0-rc2
 ```
 
 Run the reproducible Cora Pack shadow evaluation:

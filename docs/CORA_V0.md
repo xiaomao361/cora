@@ -53,9 +53,14 @@ filter is gated until a product line has enough reviewed cases and a frozen eval
 set.
 
 The repository now persists immutable product-line cases through the same MCP
-surface used for query, and exact Problem detail returns its prior cases. Case
-top-k retrieval inside Core, LLM adapter, candidate-rule promotion, hot reload,
-and a learned filter remain absent.
+surface used for query, and exact Problem detail returns its prior cases.
+`cora_export_cases` provides a product-line-scoped, stable paginated export for
+the offline boundary: the first page freezes a high-water case ID, later pages
+reuse it, and a case written during export belongs only to the next snapshot.
+This is the production-feedback transport into local iteration; it does not put
+bulk case data into Core automatically and does not activate rules. Case top-k
+retrieval inside Core, LLM adapter, candidate-rule promotion, hot reload, and a
+learned filter remain absent.
 Static Pack reload alone would improve operations but would not fulfill the Core
 iteration loop. Automatic production activation without evaluation and rollback
 is outside the current direction.

@@ -2,6 +2,8 @@ package cora
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -56,6 +58,18 @@ type Outcome struct {
 	Handled       bool   `json:"handled"`
 	RootCause     string `json:"root_cause"`
 	Action        string `json:"action"`
+}
+
+type CaseExportPage struct {
+	SchemaVersion         string        `json:"schema_version"`
+	SnapshotID            string        `json:"snapshot_id"`
+	ProductLine           string        `json:"product_line"`
+	SnapshotThroughCaseID int64         `json:"snapshot_through_case_id"`
+	AfterCaseID           int64         `json:"after_case_id"`
+	NextAfterCaseID       int64         `json:"next_after_case_id"`
+	HasMore               bool          `json:"has_more"`
+	PageSHA256            string        `json:"page_sha256"`
+	Cases                 []ProblemCase `json:"cases"`
 }
 
 func (s *Store) CurrentAttention(ctx context.Context, productLine string, limit int) ([]AttentionItem, error) {
@@ -178,6 +192,84 @@ func (s *Store) ProblemCases(ctx context.Context, productLine, service, fingerpr
 		cases = append(cases, item)
 	}
 	return cases, rows.Err()
+}
+
+func (s *Store) ExportCases(ctx context.Context, productLine string, afterCaseID, throughCaseID int64, limit int) (CaseExportPage, error) {
+	productLine = strings.TrimSpace(productLine)
+	if productLine == "" {
+		return CaseExportPage{}, errors.New("product_line is required")
+	}
+	if afterCaseID < 0 || throughCaseID < 0 {
+		return CaseExportPage{}, errors.New("after_case_id and through_case_id must not be negative")
+	}
+	if afterCaseID > 0 && throughCaseID == 0 {
+		return CaseExportPage{}, errors.New("through_case_id is required after the first page")
+	}
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	if throughCaseID == 0 {
+		if err := s.db.QueryRowContext(ctx, `SELECT COALESCE(MAX(id), 0)
+			FROM problem_cases WHERE product_line = ?`, productLine).Scan(&throughCaseID); err != nil {
+			return CaseExportPage{}, err
+		}
+	}
+	if afterCaseID > throughCaseID {
+		return CaseExportPage{}, errors.New("after_case_id must not exceed through_case_id")
+	}
+
+	rows, err := s.db.QueryContext(ctx, `SELECT id, problem_id, product_line, service,
+		fingerprint, actor, is_real_problem, handled, root_cause, action, prior_state,
+		resulting_state, context_snapshot, recorded_at
+		FROM problem_cases
+		WHERE product_line = ? AND id > ? AND id <= ?
+		ORDER BY id ASC
+		LIMIT ?`, productLine, afterCaseID, throughCaseID, limit+1)
+	if err != nil {
+		return CaseExportPage{}, err
+	}
+	defer rows.Close()
+	cases := make([]ProblemCase, 0, limit+1)
+	for rows.Next() {
+		var item ProblemCase
+		var isReal, handled int
+		var contextSnapshot, recordedAt string
+		if err := rows.Scan(&item.ID, &item.ProblemID, &item.ProductLine, &item.Service,
+			&item.Fingerprint, &item.Actor, &isReal, &handled, &item.RootCause,
+			&item.Action, &item.PriorState, &item.ResultingState, &contextSnapshot,
+			&recordedAt); err != nil {
+			return CaseExportPage{}, err
+		}
+		item.IsRealProblem = isReal == 1
+		item.Handled = handled == 1
+		if err := json.Unmarshal([]byte(contextSnapshot), &item.ContextSnapshot); err != nil {
+			return CaseExportPage{}, fmt.Errorf("decode case context snapshot: %w", err)
+		}
+		item.RecordedAt, _ = time.Parse(time.RFC3339Nano, recordedAt)
+		cases = append(cases, item)
+	}
+	if err := rows.Err(); err != nil {
+		return CaseExportPage{}, err
+	}
+	hasMore := len(cases) > limit
+	if hasMore {
+		cases = cases[:limit]
+	}
+	nextAfterCaseID := afterCaseID
+	if len(cases) > 0 {
+		nextAfterCaseID = cases[len(cases)-1].ID
+	}
+	canonical, err := json.Marshal(cases)
+	if err != nil {
+		return CaseExportPage{}, fmt.Errorf("marshal exported cases: %w", err)
+	}
+	pageHash := sha256.Sum256(canonical)
+	return CaseExportPage{
+		SchemaVersion: "cora-case.v1", SnapshotID: fmt.Sprintf("%s:%d", productLine, throughCaseID),
+		ProductLine: productLine, SnapshotThroughCaseID: throughCaseID, AfterCaseID: afterCaseID,
+		NextAfterCaseID: nextAfterCaseID, HasMore: hasMore,
+		PageSHA256: hex.EncodeToString(pageHash[:]), Cases: cases,
+	}, nil
 }
 
 func (s *Store) RecordOutcome(ctx context.Context, outcome Outcome) (result ProblemCase, resultErr error) {

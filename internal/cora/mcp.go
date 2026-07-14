@@ -45,6 +45,17 @@ type recordOutcomeOutput struct {
 	Case ProblemCase `json:"case"`
 }
 
+type exportCasesInput struct {
+	ProductLine   string `json:"product_line" jsonschema:"product line to export; cases never cross this boundary"`
+	AfterCaseID   int64  `json:"after_case_id,omitempty" jsonschema:"last case id from the previous page; zero starts a snapshot"`
+	ThroughCaseID int64  `json:"through_case_id,omitempty" jsonschema:"frozen snapshot high-water case id returned by the first page"`
+	Limit         int    `json:"limit,omitempty" jsonschema:"maximum cases from 1 to 200; defaults to 100"`
+}
+
+type exportCasesOutput struct {
+	Export CaseExportPage `json:"export"`
+}
+
 func NewMCPHandler(store *Store) http.Handler {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "cora", Version: buildinfo.Current().Version}, nil)
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -77,6 +88,13 @@ func NewMCPHandler(store *Store) http.Handler {
 			err = fmt.Errorf("problem not found in product line %q and service %q", input.ProductLine, input.Service)
 		}
 		return nil, recordOutcomeOutput{Case: item}, err
+	})
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "cora_export_cases",
+		Description: "Export one product line's immutable cases in stable pages for local persistence and offline Core iteration. Start with zero cursors, then reuse snapshot_through_case_id and next_after_case_id until has_more is false.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input exportCasesInput) (*mcpsdk.CallToolResult, exportCasesOutput, error) {
+		page, err := store.ExportCases(ctx, input.ProductLine, input.AfterCaseID, input.ThroughCaseID, input.Limit)
+		return nil, exportCasesOutput{Export: page}, err
 	})
 
 	handler := mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server {
