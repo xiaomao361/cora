@@ -1,0 +1,14 @@
+server:
+  http_listen_address: 10.0.0.10
+  http_listen_port: 8080
+
+storage:
+  path: ./cora.db
+
+auth:
+  bearer_token_file: ./auth.token
+  allow_unauthenticated: false
+
+aggregation:
+  flush_interval: 10s
+  max_active: 10000

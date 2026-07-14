@@ -14,6 +14,7 @@ import (
 	"github.com/claracore/cora/internal/auth"
 	"github.com/claracore/cora/internal/buildinfo"
 	"github.com/claracore/cora/internal/cora"
+	"github.com/claracore/cora/internal/serverconfig"
 )
 
 func main() {
@@ -23,12 +24,53 @@ func main() {
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow local development without authentication")
 	flushInterval := flag.Duration("flush-interval", 10*time.Second, "aggregation flush interval")
 	maxActive := flag.Int("max-active", 10000, "maximum active fingerprints per window")
+	configFile := flag.String("config.file", "", "YAML configuration file; relative paths use the process working directory")
+	checkConfig := flag.Bool("check-config", false, "validate config.file and exit")
 	showVersion := flag.Bool("version", false, "print build identity and exit")
 	checkDB := flag.Bool("check-db", false, "run SQLite quick_check and exit")
 	backupDB := flag.String("backup-db", "", "write a verified SQLite backup to this new path and exit")
 	flag.Parse()
 	if *showVersion {
 		_ = json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
+		return
+	}
+	if *configFile != "" {
+		configuredFlags := map[string]bool{
+			"addr": true, "db": true, "auth-token-file": true,
+			"allow-unauthenticated": true, "flush-interval": true, "max-active": true,
+		}
+		conflict := ""
+		flag.Visit(func(value *flag.Flag) {
+			if configuredFlags[value.Name] {
+				conflict = value.Name
+			}
+		})
+		if conflict != "" {
+			log.Fatalf("-%s cannot be combined with -config.file", conflict)
+		}
+		runtime, err := serverconfig.Load(*configFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		*addr = runtime.Address()
+		*dbPath = runtime.DatabasePath
+		*authTokenFile = runtime.BearerTokenFile
+		*allowUnauthenticated = runtime.AllowUnauthenticated
+		*flushInterval = runtime.FlushInterval
+		*maxActive = runtime.MaxActive
+	} else if *checkConfig {
+		log.Fatal("check-config requires config.file")
+	}
+	if *checkConfig {
+		if *authTokenFile != "" {
+			if _, err := auth.LoadBearerTokenFile(*authTokenFile); err != nil {
+				log.Fatal(err)
+			}
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"status": "ok", "config_file": *configFile, "address": *addr,
+			"database": *dbPath, "build": buildinfo.Current(),
+		})
 		return
 	}
 	if *checkDB || *backupDB != "" {

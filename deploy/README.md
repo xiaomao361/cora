@@ -9,8 +9,8 @@ Do not expose Cora Server on a public interface.
 ```text
 /home/cora/cora-server
 /home/cora/cora-agent
-/home/cora/cora-canary
 /home/cora/auth.token
+/home/cora/cora.yml
 /home/cora/agent.yml
 /home/cora/cora.db
 /home/cora/positions.json
@@ -46,17 +46,32 @@ deploy/scripts/build-release.sh v0.1.0
 cat dist/v0.1.0/SHA256SUMS
 ```
 
-Copy the three binaries directly into `/home/cora`. Before replacement, keep a
-`.previous` copy of the currently running binary for simple rollback.
+Copy only the binary needed by each host directly into `/home/cora`: Server
+hosts need `cora-server`; application hosts need `cora-agent`. `cora-canary` is
+an optional acceptance tool, not a runtime dependency. Before replacement, keep
+a `.previous` copy of the currently running binary for simple rollback.
 
 ## Server boundary
 
-Edit `deploy/supervisor/cora-server.conf` and replace `10.0.0.10` with the
-Server's private address. The process refuses to start without
-`-auth-token-file` unless `-allow-unauthenticated` is explicitly used for local
-development. Restrict the Server security group/firewall to only the selected
-Agent private addresses. `/healthz` is intentionally unauthenticated; every
-other current or future endpoint, including `/v1/*` and `/mcp`, requires the token.
+Copy `config/cora-server.example.yml` to `/home/cora/cora.yml`, then replace
+`10.0.0.10` with the Server's private address. The production command has one
+configuration argument:
+
+```sh
+cd /home/cora
+./cora-server -config.file=./cora.yml -check-config
+./cora-server -config.file=./cora.yml
+```
+
+Relative paths in `cora.yml` resolve from the process working directory. The
+Supervisor program therefore fixes `directory=/home/cora`, so `./cora.db` and
+`./auth.token` remain beside the binary and configuration. The process refuses
+to start without `auth.bearer_token_file` unless
+`auth.allow_unauthenticated: true` is explicitly used for local development.
+
+Restrict the Server security group/firewall to only the selected Agent private
+addresses. `/healthz` is intentionally unauthenticated; every other current or
+future endpoint, including `/v1/*` and `/mcp`, requires the token.
 
 The Agent-facing MCP endpoint is `http://<private-server-address>:8080/mcp` and
 uses Streamable HTTP. Configure the consuming Agent with that URL and the same
@@ -75,7 +90,8 @@ Keep `agent.start_at: end` for the first canary so deployment does not replay
 historical logs. Validate before Supervisor starts it:
 
 ```sh
-/home/cora/cora-agent -config.file=/home/cora/agent.yml -check-config
+cd /home/cora
+./cora-agent -config.file=./agent.yml -check-config
 ```
 
 ## Install and operate with Supervisor
@@ -146,7 +162,8 @@ mv /home/cora/cora.db /home/cora/cora.db.pre-restore
 cp /home/cora/cora-<timestamp>.db /home/cora/cora.db
 chown cora:cora /home/cora/cora.db
 chmod 0600 /home/cora/cora.db
-/home/cora/cora-server -db=/home/cora/cora.db -check-db
+cd /home/cora
+./cora-server -config.file=./cora.yml -check-db
 supervisorctl start cora-server
 /home/cora/cora-canary \
   -server-url=http://10.0.0.10:8080 \

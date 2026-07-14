@@ -22,7 +22,7 @@ business-development participation that is not currently available.
 
 ## Current capabilities
 
-- Promtail-style YAML with multiple explicit log targets per host.
+- Promtail-style YAML for both Server and multi-target Agent processes.
 - Production Logback pattern parsing and multiline Java stacktraces.
 - Per-target bounded pre-error breadcrumbs: trace-first, thread fallback.
 - Upload-time redaction for credential keys, phone numbers, and identity numbers.
@@ -61,8 +61,17 @@ iterative retrieval/candidate/evaluation/promotion loop is not implemented yet.
 Start the Server:
 
 ```sh
-go run ./cmd/cora-server -allow-unauthenticated -db ./cora.db
+go run ./cmd/cora-server \
+  -config.file config/cora-server.example.yml \
+  -check-config
+
+go run ./cmd/cora-server \
+  -config.file config/cora-server.example.yml
 ```
+
+The example is production-shaped and expects `./auth.token`. For disposable
+local development, the existing `-allow-unauthenticated -db ./cora.db` flags
+remain available. Relative YAML paths use the process working directory.
 
 Validate and start a multi-target Agent:
 
