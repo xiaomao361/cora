@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-retention-audit.v1.schema.json",
+  "title": "Cora Retention Audit v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "audit_run_id", "product_line", "captured_at", "database", "cora_build",
+    "storage", "tables", "breakdowns", "summary", "logical_release_estimate",
+    "problem_decisions", "unmatched_receipts"
+  ],
+  "properties": {
+    "schema_version": { "const": "cora.retention-audit.v1" },
+    "audit_run_id": { "$ref": "#/$defs/stable_id" },
+    "product_line": { "$ref": "#/$defs/non_empty" },
+    "captured_at": { "type": "string", "format": "date-time" },
+    "database": { "$ref": "#/$defs/database" },
+    "cora_build": { "$ref": "#/$defs/cora_build" },
+    "storage": { "$ref": "#/$defs/storage" },
+    "tables": {
+      "type": "array",
+      "minItems": 6,
+      "items": { "$ref": "#/$defs/table" }
+    },
+    "breakdowns": { "$ref": "#/$defs/breakdowns" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "logical_release_estimate": { "$ref": "#/$defs/logical_release" },
+    "problem_decisions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/problem_decision" }
+    },
+    "unmatched_receipts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/receipt_diagnostic" }
+    }
+  },
+  "$defs": {
+    "non_empty": { "type": "string", "minLength": 1 },
+    "stable_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "non_negative": { "type": "integer", "minimum": 0 },
+    "database": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes", "modified_at", "schema_version"],
+      "properties": {
+        "path": { "$ref": "#/$defs/non_empty" }, "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": { "$ref": "#/$defs/non_negative" }, "modified_at": { "type": "string", "format": "date-time" },
+        "schema_version": { "$ref": "#/$defs/non_negative" }
+      }
+    },
+    "cora_build": {
+      "type": "object", "additionalProperties": false, "required": ["version", "source_digest"],
+      "properties": { "version": { "$ref": "#/$defs/non_empty" }, "source_digest": { "$ref": "#/$defs/sha256" } }
+    },
+    "storage": {
+      "type": "object", "additionalProperties": false,
+      "required": ["page_count", "page_size_bytes", "freelist_count", "database_bytes_by_pages", "reusable_freelist_bytes", "wal_size_bytes", "shm_size_bytes", "quick_check"],
+      "properties": {
+        "page_count": { "$ref": "#/$defs/non_negative" }, "page_size_bytes": { "$ref": "#/$defs/non_negative" },
+        "freelist_count": { "$ref": "#/$defs/non_negative" }, "database_bytes_by_pages": { "$ref": "#/$defs/non_negative" },
+        "reusable_freelist_bytes": { "$ref": "#/$defs/non_negative" }, "wal_size_bytes": { "$ref": "#/$defs/non_negative" },
+        "shm_size_bytes": { "$ref": "#/$defs/non_negative" }, "quick_check": { "const": "ok" }
+      }
+    },
+    "table": {
+      "type": "object", "additionalProperties": false, "required": ["table", "rows"],
+      "properties": { "table": { "enum": ["problems", "trend_points", "node_occurrences", "node_trend_points", "cora_decisions", "problem_cases"] }, "rows": { "$ref": "#/$defs/non_negative" }, "earliest_at": { "type": "string" }, "latest_at": { "type": "string" } }
+    },
+    "bucket": {
+      "type": "object", "additionalProperties": false, "required": ["key", "problems", "occurrences"],
+      "properties": { "key": { "$ref": "#/$defs/non_empty" }, "problems": { "$ref": "#/$defs/non_negative" }, "occurrences": { "$ref": "#/$defs/non_negative" } }
+    },
+    "breakdowns": {
+      "type": "object", "additionalProperties": false,
+      "required": ["by_state", "by_decision", "by_handled", "by_case_presence"],
+      "properties": {
+        "by_state": { "type": "array", "items": { "$ref": "#/$defs/bucket" } },
+        "by_decision": { "type": "array", "items": { "$ref": "#/$defs/bucket" } },
+        "by_handled": { "type": "array", "items": { "$ref": "#/$defs/bucket" } },
+        "by_case_presence": { "type": "array", "items": { "$ref": "#/$defs/bucket" } }
+      }
+    },
+    "summary": {
+      "type": "object", "additionalProperties": false,
+      "required": ["problem_count", "eligible_problems", "ineligible_problems", "invalid_receipt_files"],
+      "properties": {
+        "problem_count": { "$ref": "#/$defs/non_negative" }, "eligible_problems": { "$ref": "#/$defs/non_negative" },
+        "ineligible_problems": { "$ref": "#/$defs/non_negative" }, "invalid_receipt_files": { "$ref": "#/$defs/non_negative" }
+      }
+    },
+    "logical_release": {
+      "type": "object", "additionalProperties": false,
+      "required": ["estimated_rows", "estimated_bytes", "method", "physical_caveat"],
+      "properties": { "estimated_rows": { "$ref": "#/$defs/non_negative" }, "estimated_bytes": { "$ref": "#/$defs/non_negative" }, "method": { "$ref": "#/$defs/non_empty" }, "physical_caveat": { "$ref": "#/$defs/non_empty" } }
+    },
+    "problem_decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["problem_id", "product_line", "service", "fingerprint", "state", "decision", "occurrence_count", "last_seen", "case_count", "handled_case_count", "retention_eligible", "blocking_reasons", "estimated_releasable_rows", "estimated_releasable_bytes"],
+      "properties": {
+        "problem_id": { "type": "integer", "minimum": 1 }, "product_line": { "$ref": "#/$defs/non_empty" }, "service": { "$ref": "#/$defs/non_empty" },
+        "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{32}$" }, "state": { "enum": ["new", "acknowledged", "resolved", "recurring"] },
+        "decision": { "enum": ["attention", "observe", "ignore", "none"] }, "occurrence_count": { "$ref": "#/$defs/non_negative" }, "last_seen": { "type": "string" },
+        "case_count": { "$ref": "#/$defs/non_negative" }, "handled_case_count": { "$ref": "#/$defs/non_negative" }, "closure_receipt_id": { "$ref": "#/$defs/stable_id" },
+        "retention_eligible": { "type": "boolean" }, "blocking_reasons": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/non_empty" } },
+        "estimated_releasable_rows": { "$ref": "#/$defs/non_negative" }, "estimated_releasable_bytes": { "$ref": "#/$defs/non_negative" }
+      },
+      "allOf": [{ "if": { "properties": { "retention_eligible": { "const": true } }, "required": ["retention_eligible"] }, "then": { "properties": { "blocking_reasons": { "maxItems": 0 } }, "required": ["closure_receipt_id"] } }]
+    },
+    "receipt_diagnostic": {
+      "type": "object", "additionalProperties": false, "required": ["path", "reasons"],
+      "properties": { "path": { "$ref": "#/$defs/non_empty" }, "product_line": { "type": "string" }, "service": { "type": "string" }, "fingerprint": { "type": "string" }, "reasons": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/non_empty" } } }
+    }
+  }
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -96,6 +97,8 @@ func (s *Store) CurrentAttention(ctx context.Context, productLine string, limit 
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.product_line, p.fingerprint, p.service, p.environment,
 		       p.exception_type, p.logger, p.count, p.last_seen, p.state, p.state_changed_at,
+		       COALESCE(json_extract(p.first_sample, '$.trace_id'), ''),
+		       COALESCE(json_extract(p.latest_sample, '$.trace_id'), ''),
 		       d.decision, d.category, d.rule_id, d.reason, d.source,
 		       d.experience_version, d.decided_at
 		FROM problems p
@@ -104,29 +107,143 @@ func (s *Store) CurrentAttention(ctx context.Context, productLine string, limit 
 		WHERE p.product_line = ? AND p.state IN ('new', 'acknowledged', 'recurring') AND d.decision != 'ignore'
 		ORDER BY CASE p.state WHEN 'recurring' THEN 0 WHEN 'new' THEN 1 ELSE 2 END,
 		         CASE d.decision WHEN 'attention' THEN 0 ELSE 1 END,
-		         p.last_seen DESC
-		LIMIT ?`, productLine, limit)
+		         p.last_seen DESC`, productLine)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AttentionItem{}
+	candidates := []attentionCandidate{}
 	for rows.Next() {
-		var item AttentionItem
+		var candidate attentionCandidate
 		var lastSeen, stateChangedAt, decidedAt string
-		if err := rows.Scan(&item.ProblemID, &item.ProductLine, &item.Fingerprint,
-			&item.Service, &item.Environment, &item.ExceptionType, &item.Logger,
-			&item.Count, &lastSeen, &item.State, &stateChangedAt, &item.Decision,
-			&item.Category, &item.RuleID, &item.Reason, &item.Source,
-			&item.ExperienceVersion, &decidedAt); err != nil {
+		if err := rows.Scan(&candidate.item.ProblemID, &candidate.item.ProductLine, &candidate.item.Fingerprint,
+			&candidate.item.Service, &candidate.item.Environment, &candidate.item.ExceptionType, &candidate.item.Logger,
+			&candidate.item.Count, &lastSeen, &candidate.item.State, &stateChangedAt,
+			&candidate.firstTraceID, &candidate.latestTraceID, &candidate.item.Decision,
+			&candidate.item.Category, &candidate.item.RuleID, &candidate.item.Reason, &candidate.item.Source,
+			&candidate.item.ExperienceVersion, &decidedAt); err != nil {
 			return nil, err
 		}
-		item.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeen)
-		item.StateChangedAt, _ = time.Parse(time.RFC3339Nano, stateChangedAt)
-		item.DecidedAt, _ = time.Parse(time.RFC3339Nano, decidedAt)
-		items = append(items, item)
+		candidate.item.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeen)
+		candidate.item.StateChangedAt, _ = time.Parse(time.RFC3339Nano, stateChangedAt)
+		candidate.item.DecidedAt, _ = time.Parse(time.RFC3339Nano, decidedAt)
+		candidate.traceIDs = map[string]bool{}
+		if candidate.firstTraceID != "" {
+			candidate.traceIDs[candidate.firstTraceID] = true
+		}
+		if candidate.latestTraceID != "" {
+			candidate.traceIDs[candidate.latestTraceID] = true
+		}
+		candidates = append(candidates, candidate)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return groupAttentionCandidates(candidates, limit), nil
+}
+
+type attentionCandidate struct {
+	item                        AttentionItem
+	firstTraceID, latestTraceID string
+	traceIDs                    map[string]bool
+}
+
+func groupAttentionCandidates(candidates []attentionCandidate, limit int) []AttentionItem {
+	parents := make([]int, len(candidates))
+	for index := range parents {
+		parents[index] = index
+	}
+	var find func(int) int
+	find = func(index int) int {
+		if parents[index] != index {
+			parents[index] = find(parents[index])
+		}
+		return parents[index]
+	}
+	union := func(left, right int) {
+		leftRoot, rightRoot := find(left), find(right)
+		if leftRoot != rightRoot {
+			parents[rightRoot] = leftRoot
+		}
+	}
+	traceOwner := map[string]int{}
+	for index, candidate := range candidates {
+		for traceID := range candidate.traceIDs {
+			if owner, exists := traceOwner[traceID]; exists {
+				union(index, owner)
+			} else {
+				traceOwner[traceID] = index
+			}
+		}
+	}
+	groups := map[int][]int{}
+	for index := range candidates {
+		root := find(index)
+		groups[root] = append(groups[root], index)
+	}
+	result := make([]AttentionItem, 0, min(len(groups), limit))
+	seen := map[int]bool{}
+	for index := range candidates {
+		root := find(index)
+		if seen[root] {
+			continue
+		}
+		seen[root] = true
+		members := groups[root]
+		representative := candidates[index].item
+		representative.IncidentProblemCount = len(members)
+		representative.RelatedCount = len(members) - 1
+		representative.RelatedProblems = []AttentionRelatedProblem{}
+		traceFrequency := map[string]int{}
+		services := map[string]bool{}
+		identities := make([]string, 0, len(members))
+		for _, member := range members {
+			candidate := candidates[member]
+			services[candidate.item.Service] = true
+			identities = append(identities, candidate.item.Service+":"+candidate.item.Fingerprint)
+			for traceID := range candidate.traceIDs {
+				traceFrequency[traceID]++
+			}
+		}
+		for service := range services {
+			representative.IncidentServices = append(representative.IncidentServices, service)
+		}
+		sort.Strings(representative.IncidentServices)
+		for traceID, frequency := range traceFrequency {
+			if frequency > 1 {
+				representative.SharedTraceIDs = append(representative.SharedTraceIDs, traceID)
+			}
+		}
+		sort.Strings(representative.SharedTraceIDs)
+		sort.Strings(identities)
+		digest := sha256.Sum256([]byte(strings.Join(identities, "\n")))
+		representative.IncidentKey = "incident-" + hex.EncodeToString(digest[:8])
+		for _, member := range members {
+			if member == index {
+				continue
+			}
+			candidate := candidates[member]
+			shared := []string{}
+			for traceID := range candidate.traceIDs {
+				if traceFrequency[traceID] > 1 {
+					shared = append(shared, traceID)
+				}
+			}
+			sort.Strings(shared)
+			representative.RelatedProblems = append(representative.RelatedProblems, AttentionRelatedProblem{
+				ProblemID: candidate.item.ProblemID, Service: candidate.item.Service,
+				Fingerprint: candidate.item.Fingerprint, State: candidate.item.State,
+				Decision: candidate.item.Decision, Category: candidate.item.Category,
+				Count: candidate.item.Count, LastSeen: candidate.item.LastSeen,
+				SharedTraceIDs: shared,
+			})
+		}
+		result = append(result, representative)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
 }
 
 func (s *Store) GetProblem(ctx context.Context, productLine, service, fingerprint string) (ProblemDetail, error) {

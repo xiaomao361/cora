@@ -38,6 +38,28 @@ type getProblemOutput struct {
 	Detail ProblemDetail `json:"detail"`
 }
 
+type iterationSnapshotInput struct {
+	ProductLine  string `json:"product_line" jsonschema:"product line to query; facts never cross this boundary"`
+	BusinessDate string `json:"business_date" jsonschema:"business date in YYYY-MM-DD"`
+	Timezone     string `json:"timezone,omitempty" jsonschema:"IANA timezone; defaults to Asia/Shanghai"`
+	BaselineDays int    `json:"baseline_days,omitempty" jsonschema:"complete days before the business date from 1 to 30; defaults to 7"`
+	Limit        int    `json:"limit,omitempty" jsonschema:"maximum daily Problems from 1 to 1000; defaults to 200"`
+}
+
+type iterationSnapshotOutput struct {
+	Snapshot IterationSnapshot `json:"snapshot"`
+}
+
+type retentionAuditInput struct {
+	ProductLine    string `json:"product_line" jsonschema:"product line to audit; facts never cross this boundary"`
+	AfterProblemID int64  `json:"after_problem_id,omitempty" jsonschema:"last problem id from the previous page; zero starts from the beginning"`
+	Limit          int    `json:"limit,omitempty" jsonschema:"maximum problems from 1 to 500; defaults to 200"`
+}
+
+type retentionAuditOutput struct {
+	Audit OnlineRetentionAudit `json:"audit"`
+}
+
 type recordOutcomeInput struct {
 	ProductLine   string `json:"product_line" jsonschema:"product line owning the problem"`
 	Service       string `json:"service" jsonschema:"service owning the problem"`
@@ -68,7 +90,7 @@ func NewMCPHandler(store *Store) http.Handler {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "cora", Version: buildinfo.Current().Version}, nil)
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "cora_list_attention",
-		Description: "List current new, acknowledged-but-unhandled, or recurring Cora problems for one explicit product line.",
+		Description: "List current new, acknowledged-but-unhandled, or recurring Cora attention incidents for one explicit product line. Problems sharing representative trace IDs are grouped without merging stored facts.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input listAttentionInput) (*mcpsdk.CallToolResult, listAttentionOutput, error) {
 		items, err := store.CurrentAttention(ctx, input.ProductLine, input.Limit)
 		return nil, listAttentionOutput{Attention: items}, err
@@ -85,6 +107,24 @@ func NewMCPHandler(store *Store) http.Handler {
 			detail = boundProblemDetailForMCP(detail)
 		}
 		return nil, getProblemOutput{Detail: detail}, err
+	})
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name: "cora_iteration_snapshot",
+		Description: "Summarize all Cora decisions with occurrences in one explicit product-line business date. " +
+			"Returns daily and prior-window counts, nodes, cases, and rule identity without raw samples or production writes.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input iterationSnapshotInput) (*mcpsdk.CallToolResult, iterationSnapshotOutput, error) {
+		snapshot, err := store.IterationSnapshot(ctx, input.ProductLine, input.BusinessDate,
+			input.Timezone, input.BaselineDays, input.Limit)
+		return nil, iterationSnapshotOutput{Snapshot: snapshot}, err
+	})
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name: "cora_retention_audit",
+		Description: "Run a live read-only retention preflight for one explicit product line. " +
+			"Returns full-line counts and paged per-Problem blockers without reading local closure artifacts, authorizing deletion, or writing production data. " +
+			"A consistent-backup cora-retention-audit run remains mandatory before cleanup.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input retentionAuditInput) (*mcpsdk.CallToolResult, retentionAuditOutput, error) {
+		audit, err := store.OnlineRetentionAudit(ctx, input.ProductLine, input.AfterProblemID, input.Limit)
+		return nil, retentionAuditOutput{Audit: audit}, err
 	})
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "cora_record_outcome",

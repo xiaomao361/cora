@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-iteration-run.v1.schema.json",
+  "title": "Cora Iteration Run v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "iteration_run_id",
+    "product_line",
+    "business_date",
+    "input_window",
+    "created_at",
+    "status",
+    "cora_build",
+    "pack",
+    "case_snapshot",
+    "artifacts"
+  ],
+  "properties": {
+    "schema_version": { "const": "cora.iteration-run.v1" },
+    "iteration_run_id": { "$ref": "#/$defs/stable_id" },
+    "product_line": { "$ref": "#/$defs/non_empty" },
+    "business_date": { "type": "string", "format": "date" },
+    "input_window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end", "timezone"],
+      "properties": {
+        "start": { "type": "string", "format": "date-time" },
+        "end": { "type": "string", "format": "date-time" },
+        "timezone": { "$ref": "#/$defs/non_empty" }
+      }
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "completed_at": { "type": "string", "format": "date-time" },
+    "status": { "type": "string", "enum": ["running", "completed", "failed"] },
+    "cora_build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "commit", "schema_version"],
+      "properties": {
+        "version": { "$ref": "#/$defs/non_empty" },
+        "commit": { "type": "string", "pattern": "^[0-9a-f]{7,64}$" },
+        "build_time": { "type": "string" },
+        "go_version": { "type": "string" },
+        "schema_version": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "pack": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "sha256"],
+      "properties": {
+        "version": { "$ref": "#/$defs/non_empty" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "case_snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["snapshot_id", "through_case_id", "pages", "manifest_sha256", "verified_at"],
+      "properties": {
+        "snapshot_id": { "$ref": "#/$defs/non_empty" },
+        "through_case_id": { "type": "integer", "minimum": 0 },
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["after_case_id", "next_after_case_id", "case_count", "page_sha256"],
+            "properties": {
+              "after_case_id": { "type": "integer", "minimum": 0 },
+              "next_after_case_id": { "type": "integer", "minimum": 0 },
+              "case_count": { "type": "integer", "minimum": 0, "maximum": 200 },
+              "page_sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "verified_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "attention_snapshot": { "$ref": "#/$defs/artifact" },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "allOf": [
+          { "$ref": "#/$defs/artifact" },
+          {
+            "type": "object",
+            "required": ["role"],
+            "properties": {
+              "role": {
+                "type": "string",
+                "enum": [
+                  "case_snapshot",
+                  "case_snapshot_manifest",
+                  "iteration_snapshot",
+                  "attention_incidents",
+                  "triage_results",
+                  "code_evidence",
+                  "rule_candidates",
+                  "candidate_pack_patch",
+                  "shadow_eval_json",
+                  "shadow_eval_markdown",
+                  "closure_receipt"
+                ]
+              }
+            }
+          }
+        ]
+      }
+    },
+    "failure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stage", "message"],
+      "properties": {
+        "stage": { "$ref": "#/$defs/non_empty" },
+        "message": { "$ref": "#/$defs/non_empty" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "completed" } }, "required": ["status"] },
+      "then": { "required": ["completed_at", "attention_snapshot"] }
+    },
+    {
+      "if": { "properties": { "status": { "const": "failed" } }, "required": ["status"] },
+      "then": { "required": ["completed_at", "failure"] }
+    }
+  ],
+  "$defs": {
+    "non_empty": { "type": "string", "minLength": 1 },
+    "stable_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "created_at"],
+      "properties": {
+        "path": { "type": "string", "pattern": "^[^/].+" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "role": { "type": "string" }
+      }
+    }
+  }
+}

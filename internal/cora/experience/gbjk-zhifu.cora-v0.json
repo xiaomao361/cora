@@ -1,7 +1,7 @@
 {
   "schema_version": "cora.experience-pack.v1",
   "product_line": "gbjk-zhifu",
-  "version": "cora-gbjk-v0.1.0",
+  "version": "cora-gbjk-v0.1.1",
   "source": {
     "type": "validated_rule_baseline",
     "reviewed_at": "2026-07-13"
@@ -828,6 +828,9 @@
         "class": "RedissonService",
         "message_contains": [
           "分布式锁"
+        ],
+        "exclude_breadcrumb_message_contains": [
+          "[特殊人群补助]未在投保信息中找到"
         ]
       }
     },
@@ -840,6 +843,9 @@
         "class": "GlobalExceptionHandler",
         "exception_contains": [
           "io.seata"
+        ],
+        "exclude_breadcrumb_message_contains": [
+          "[特殊人群补助]未在投保信息中找到"
         ]
       }
     },
@@ -864,6 +870,9 @@
         "class": "GlobalExceptionHandler",
         "message_contains": [
           "/inner/cases/"
+        ],
+        "exclude_breadcrumb_message_contains": [
+          "[特殊人群补助]未在投保信息中找到"
         ]
       }
     },
@@ -1687,6 +1696,21 @@
         "method": "executeOrderStatusNotify",
         "message_contains": [
           "[订单回调处理] 重试执行出现异常"
+        ]
+      }
+    },
+    {
+      "id": "ig_63",
+      "decision": "ignore",
+      "category": "业务校验-特殊人群补助未投保",
+      "reason": "业务方确认未投保特殊人群补助是案件推送流程中的正常判断分支",
+      "match": {
+        "class_contains": [
+          "RedissonService",
+          "GlobalExceptionHandler"
+        ],
+        "breadcrumb_message_contains": [
+          "[特殊人群补助]未在投保信息中找到"
         ]
       }
     }

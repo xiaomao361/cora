@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -15,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/claracore/cora/internal/buildinfo"
 	"github.com/claracore/cora/internal/cora"
+	"github.com/claracore/cora/internal/sanitize"
 )
 
 type Config struct {
@@ -75,6 +78,8 @@ func Run(ctx context.Context, cfg Config) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
+	build := buildinfo.Current()
+	log.Printf("Cora Agent starting mode=single version=%s commit=%s targets=1", build.Version, build.Commit)
 	positions, err := openPositionStore(cfg.PositionsPath)
 	if err != nil {
 		return err
@@ -89,9 +94,17 @@ func runTarget(ctx context.Context, cfg Config, positions *positionStore, runtim
 	}
 	runtime.setPath(absolutePath)
 	runtime.setRunning(true)
-	defer runtime.setRunning(false)
+	log.Printf("Cora Agent target starting product_line=%q service=%q path=%q", cfg.ProductLine, cfg.Service, absolutePath)
+	defer func() {
+		runtime.setRunning(false)
+		status := runtime.snapshot()
+		log.Printf("Cora Agent target stopped product_line=%q service=%q parsed=%d errors=%d sent=%d retries=%d failures=%d lag_bytes=%d",
+			cfg.ProductLine, cfg.Service, status.ParsedRecords, status.ErrorEvents, status.SentEvents,
+			status.RetryAttempts, status.DeliveryFailures, status.LagBytes)
+	}()
 	client := &http.Client{Timeout: cfg.RequestTimeout}
 	breadcrumbs := newBreadcrumbBuffer(defaultBreadcrumbMaxBytes)
+	unavailableLogged := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil
@@ -101,12 +114,18 @@ func runTarget(ctx context.Context, cfg Config, positions *positionStore, runtim
 			return nil
 		}
 		if errors.Is(err, errReopen) {
+			unavailableLogged = false
 			continue
 		}
 		if err == nil {
 			return nil
 		}
 		runtime.setUnavailable(err)
+		if !unavailableLogged {
+			log.Printf("Cora Agent target unavailable product_line=%q service=%q path=%q error=%q",
+				cfg.ProductLine, cfg.Service, absolutePath, sanitize.RedactSignedURLCredentials(err.Error()))
+			unavailableLogged = true
+		}
 		if !os.IsNotExist(err) {
 			return err
 		}
@@ -129,10 +148,13 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 	identity := fileID(info)
 	stored, exists := positions.get(path)
 	offset := int64(0)
+	startMode := "beginning"
 	if exists && stored.FileID == identity && stored.Offset <= info.Size() {
 		offset = stored.Offset
+		startMode = "resume"
 	} else if !exists && !cfg.StartAtBeginning {
 		offset = info.Size()
+		startMode = "tail"
 	}
 	if _, err := file.Seek(offset, io.SeekStart); err != nil {
 		return err
@@ -142,6 +164,8 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 		return err
 	}
 	runtime.observeFile(info.Size(), offset)
+	log.Printf("Cora Agent target file opened product_line=%q service=%q path=%q mode=%s offset=%d size=%d",
+		cfg.ProductLine, cfg.Service, path, startMode, offset, info.Size())
 
 	reader := bufio.NewReader(file)
 	var record strings.Builder
@@ -238,6 +262,12 @@ func tailOpenFile(ctx context.Context, cfg Config, path string, positions *posit
 			runtime.observeFile(pathInfo.Size(), currentPosition.Offset)
 		}
 		if statErr == nil && openErr == nil && (!os.SameFile(openInfo, pathInfo) || pathInfo.Size() < offset) {
+			reason := "rotation"
+			if os.SameFile(openInfo, pathInfo) && pathInfo.Size() < offset {
+				reason = "copy-truncate"
+			}
+			log.Printf("Cora Agent target reopening product_line=%q service=%q path=%q reason=%s",
+				cfg.ProductLine, cfg.Service, path, reason)
 			finalize(offset)
 			if err := flush(); err != nil {
 				return err
@@ -328,6 +358,8 @@ func sendBatch(ctx context.Context, client *http.Client, cfg Config, events []co
 		}
 		if err == nil && status >= 200 && status < 300 {
 			runtime.delivered(len(events))
+			log.Printf("Cora Agent batch delivered product_line=%q service=%q events=%d bytes=%d status=%d attempts=%d",
+				cfg.ProductLine, cfg.Service, len(events), len(body), status, attempt+1)
 			return nil
 		}
 		retryable := err != nil || status == http.StatusTooManyRequests || status >= 500
@@ -335,9 +367,15 @@ func sendBatch(ctx context.Context, client *http.Client, cfg Config, events []co
 		if !retryable || attempt >= cfg.MaxRetries {
 			finalErr := fmt.Errorf("send batch failed after %d attempts: status=%d error=%v", attempt+1, status, err)
 			runtime.deliveryFailed(finalErr)
+			log.Printf("Cora Agent batch failed product_line=%q service=%q events=%d status=%d attempts=%d error=%q",
+				cfg.ProductLine, cfg.Service, len(events), status, attempt+1,
+				sanitize.RedactSignedURLCredentials(fmt.Sprint(err)))
 			return finalErr
 		}
 		runtime.retry(attemptErr)
+		log.Printf("Cora Agent batch retry product_line=%q service=%q events=%d status=%d attempt=%d next_backoff=%s error=%q",
+			cfg.ProductLine, cfg.Service, len(events), status, attempt+1, backoff,
+			sanitize.RedactSignedURLCredentials(fmt.Sprint(err)))
 		if err := wait(ctx, backoff); err != nil {
 			return err
 		}

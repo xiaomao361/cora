@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -100,6 +102,16 @@ func TestAgentRetriesAndCommitsAcknowledgedPosition(t *testing.T) {
 }
 
 func TestDeliveryStatusShowsRetryAndRecovery(t *testing.T) {
+	var logs bytes.Buffer
+	previousWriter, previousFlags, previousPrefix := log.Writer(), log.Flags(), log.Prefix()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+	})
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		if attempts.Add(1) == 1 {
@@ -113,7 +125,10 @@ func TestDeliveryStatusShowsRetryAndRecovery(t *testing.T) {
 	runtime := newTargetRuntime(cfg)
 	runtime.setRunning(true)
 	runtime.observeFile(100, 50)
-	events := []cora.Event{{ProductLine: "line", Service: "api", ExceptionType: "Timeout"}}
+	events := []cora.Event{{
+		ProductLine: "line", Service: "api", ExceptionType: "Timeout",
+		Message: "private-event-message-must-not-be-logged",
+	}}
 	if err := sendBatch(context.Background(), server.Client(), cfg, events, runtime); err != nil {
 		t.Fatal(err)
 	}
@@ -125,6 +140,13 @@ func TestDeliveryStatusShowsRetryAndRecovery(t *testing.T) {
 	ready, reasons := runtimeReadiness([]*targetRuntime{runtime})
 	if !ready || len(reasons) != 0 {
 		t.Fatalf("readiness ready=%v reasons=%v", ready, reasons)
+	}
+	text := logs.String()
+	if !strings.Contains(text, "Cora Agent batch retry") || !strings.Contains(text, "Cora Agent batch delivered") {
+		t.Fatalf("operational delivery logs missing: %s", text)
+	}
+	if strings.Contains(text, "private-event-message-must-not-be-logged") {
+		t.Fatalf("event content leaked into operational logs: %s", text)
 	}
 }
 

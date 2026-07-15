@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1031,7 +1032,16 @@ func (a *Aggregator) Run(ctx context.Context, interval time.Duration) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			_ = a.Flush(ctx)
+			before := a.Stats()
+			err := a.Flush(ctx)
+			if err != nil {
+				log.Printf("Cora Server flush failed pending_fingerprints=%d error=%q", before.PendingFingerprints, err)
+			} else if before.PendingFingerprints > 0 {
+				after := a.Stats()
+				log.Printf("Cora Server flush completed fingerprints=%d events=%d duration_ms=%.3f",
+					before.PendingFingerprints, after.FlushedEvents-before.FlushedEvents,
+					float64(after.LastFlushDuration.Microseconds())/1000)
+			}
 		}
 	}
 }
@@ -1110,6 +1120,8 @@ func HandlerWithOptions(store *Store, options HandlerOptions, aggregators ...*Ag
 				return
 			}
 		}
+		stats := aggregator.Stats()
+		log.Printf("Cora Server batch accepted events=%d pending_fingerprints=%d", len(request.Events), stats.PendingFingerprints)
 		writeJSON(w, http.StatusAccepted, map[string]int{"accepted": len(request.Events)})
 	})
 	mux.HandleFunc("GET /v1/problems", func(w http.ResponseWriter, r *http.Request) {

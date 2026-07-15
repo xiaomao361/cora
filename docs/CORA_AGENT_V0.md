@@ -108,6 +108,11 @@ credentials, mainland mobile-number shapes, and 18-character identity-number
 shapes. Redaction covers the ERROR message, stacktrace, breadcrumbs, and labels;
 raw values are not sent to Cora Server.
 
+Operational stdout/stderr logs record process and target lifecycle, file
+open/reopen, batch counts and byte sizes, delivery status, retry backoff, and a
+final per-target counter summary. They deliberately omit event messages,
+stacktraces, breadcrumbs, labels, bearer tokens, and request bodies.
+
 ## Run locally
 
 Start Cora, then the agent using YAML:

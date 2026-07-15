@@ -1,9 +1,11 @@
 package cora
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +16,39 @@ import (
 
 	"github.com/claracore/cora/internal/buildinfo"
 )
+
+func TestBatchOperationalLogExcludesEventContent(t *testing.T) {
+	var logs bytes.Buffer
+	previousWriter, previousFlags, previousPrefix := log.Writer(), log.Flags(), log.Prefix()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	log.SetPrefix("")
+	t.Cleanup(func() {
+		log.SetOutput(previousWriter)
+		log.SetFlags(previousFlags)
+		log.SetPrefix(previousPrefix)
+	})
+	store, err := OpenStore(t.TempDir() + "/cora.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	aggregator := NewAggregator(store, 10)
+	body := `{"events":[{"product_line":"line","service":"api","environment":"prod","exception_type":"Timeout","message":"private-event-message-must-not-be-logged"}]}`
+	request := httptest.NewRequest(http.MethodPost, "/v1/events:batch", strings.NewReader(body))
+	response := httptest.NewRecorder()
+	Handler(store, aggregator).ServeHTTP(response, request)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+	text := logs.String()
+	if !strings.Contains(text, "Cora Server batch accepted events=1 pending_fingerprints=1") {
+		t.Fatalf("batch acceptance log missing: %s", text)
+	}
+	if strings.Contains(text, "private-event-message-must-not-be-logged") {
+		t.Fatalf("event content leaked into operational logs: %s", text)
+	}
+}
 
 func TestSchemaMigrationCreatesAndReopensCurrentDatabase(t *testing.T) {
 	path := t.TempDir() + "/cora.db"

@@ -1,8 +1,34 @@
 # Cora Supervisor deployment
 
-This is the controlled canary path for one Cora Server and one Cora Agent.
-Replace the example private IP, node identity, service, and log path before use.
-Do not expose Cora Server on a public interface.
+This is the reusable controlled-canary template for one Cora Server and one Cora Agent.
+Replace the example private IP, node identity, service, and log path before use. Do not expose
+the Server process directly; any external access must terminate at the controlled reverse proxy.
+
+## Current production topology (2026-07-15)
+
+The current GBJK deployment intentionally differs from the generic `/home/cora` template below:
+
+```text
+Codex / authorized client
+  -> https://cora.gbgoodness.com
+  -> Nginx on public-web (172.22.244.253)
+  -> Cora Server (172.22.245.1:8088)
+
+business host Cora Agent
+  -> http://public.internal:8088/v1/events:batch
+  -> Cora Server (172.22.245.1:8088)
+```
+
+- Server runtime: user `gbjk`, directory `/home/gbjk/zhouwei/cora`, command
+  `/home/gbjk/zhouwei/cora/cora-server -config.file=./cora.yml`.
+- Agent runtime: user `gbjk`, directory `/home/gbjk/cora`, command
+  `/home/gbjk/cora/cora-agent -config.file=/home/gbjk/cora/agent.yml`.
+- Server data/token: `./cora.db` and `./auth.token` relative to the Server runtime directory.
+- Each Agent owns `./positions.json`; its local health listener is bound to the business host IP
+  on port `9088`.
+
+The sections below remain examples for a new installation, not a statement of the current
+production paths or ports.
 
 ## Flat runtime layout
 

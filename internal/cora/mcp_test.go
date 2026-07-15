@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -72,6 +73,36 @@ func TestMCPProblemDetailRelatesSharedTracesAndBoundsBreadcrumbs(t *testing.T) {
 		len(output.Detail.RelatedProblems[0].SharedTraceIDs) != 1 ||
 		output.Detail.RelatedProblems[0].SharedTraceIDs[0] != "trace-shared" {
 		t.Fatalf("related problems=%+v", output.Detail.RelatedProblems)
+	}
+	listResult := callMCPTool(t, ctx, session, "cora_list_attention", map[string]any{
+		"product_line": "payments",
+	})
+	var listOutput listAttentionOutput
+	decodeStructuredOutput(t, listResult, &listOutput)
+	if len(listOutput.Attention) != 2 {
+		t.Fatalf("attention incidents=%d, want 2: %+v", len(listOutput.Attention), listOutput.Attention)
+	}
+	var grouped *AttentionItem
+	for index := range listOutput.Attention {
+		if listOutput.Attention[index].IncidentProblemCount == 2 {
+			grouped = &listOutput.Attention[index]
+			break
+		}
+	}
+	if grouped == nil || grouped.IncidentKey == "" || grouped.RelatedCount != 1 ||
+		len(grouped.RelatedProblems) != 1 || len(grouped.SharedTraceIDs) != 1 ||
+		grouped.SharedTraceIDs[0] != "trace-shared" ||
+		len(grouped.IncidentServices) != 2 || grouped.IncidentServices[0] != "checkout" ||
+		grouped.IncidentServices[1] != "inventory" {
+		t.Fatalf("grouped attention incident=%+v", grouped)
+	}
+	limitedResult := callMCPTool(t, ctx, session, "cora_list_attention", map[string]any{
+		"product_line": "payments", "limit": 1,
+	})
+	var limitedOutput listAttentionOutput
+	decodeStructuredOutput(t, limitedResult, &limitedOutput)
+	if len(limitedOutput.Attention) != 1 {
+		t.Fatalf("incident limit applied before grouping: %+v", limitedOutput.Attention)
 	}
 	var sample Event
 	if err := json.Unmarshal([]byte(output.Detail.Problem.FirstSample), &sample); err != nil {
@@ -185,6 +216,22 @@ func TestMCPAttentionInvestigationOutcomeAndRecurrenceLoop(t *testing.T) {
 	decodeStructuredOutput(t, getResult, &getOutput)
 	if getOutput.Detail.Problem.State != ProblemStateNew || len(getOutput.Detail.NodeOccurrences) != 1 || len(getOutput.Detail.Cases) != 0 {
 		t.Fatalf("initial detail=%+v", getOutput.Detail)
+	}
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatal(err)
+	}
+	iterationResult := callMCPTool(t, ctx, session, "cora_iteration_snapshot", map[string]any{
+		"product_line": "payments", "business_date": time.Now().In(location).Format("2006-01-02"),
+		"timezone": "Asia/Shanghai", "baseline_days": 7,
+	})
+	var iterationOutput iterationSnapshotOutput
+	decodeStructuredOutput(t, iterationResult, &iterationOutput)
+	if iterationOutput.Snapshot.SchemaVersion != IterationSnapshotSchemaVersion ||
+		len(iterationOutput.Snapshot.Problems) != 1 ||
+		iterationOutput.Snapshot.Problems[0].Fingerprint != fingerprint ||
+		iterationOutput.Snapshot.Problems[0].WindowCount != 1 {
+		t.Fatalf("iteration snapshot=%+v", iterationOutput.Snapshot)
 	}
 
 	recordResult := callMCPTool(t, ctx, session, "cora_record_outcome", map[string]any{
@@ -317,6 +364,137 @@ func TestMCPAttentionInvestigationOutcomeAndRecurrenceLoop(t *testing.T) {
 	if len(latestExport.Export.Cases) != 3 || latestExport.Export.SnapshotThroughCaseID != case3.ID {
 		t.Fatalf("latest export=%+v", latestExport.Export)
 	}
+}
+
+func TestMCPRetentionAuditIsProductScopedReadOnlyAndPaged(t *testing.T) {
+	ctx := context.Background()
+	store, err := OpenStore(t.TempDir() + "/cora.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	makeEvent := func(productLine, logger, method string) Event {
+		return Event{
+			ProductLine: productLine, Service: "checkout", Environment: "prod",
+			Logger: logger, ExceptionType: "CheckoutFailure", Message: method + " failed",
+			Stacktrace: "at com.example.Checkout." + method + "(Checkout.java:41)",
+		}
+	}
+	active := makeEvent("payments", "com.example.Active", "active")
+	acknowledged := makeEvent("payments", "com.example.Acknowledged", "acknowledged")
+	resolved := makeEvent("payments", "com.example.Resolved", "resolved")
+	otherLine := makeEvent("orders", "com.example.Orders", "orders")
+	for _, event := range []Event{active, acknowledged, resolved, otherLine} {
+		if err := store.Record(ctx, event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := store.RecordOutcome(ctx, Outcome{
+		ProductLine: "payments", Service: "checkout", Fingerprint: Fingerprint(acknowledged),
+		Actor: "codex", IsRealProblem: true, Handled: false,
+		RootCause: "investigation pending", Action: "continue investigation",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RecordOutcome(ctx, Outcome{
+		ProductLine: "payments", Service: "checkout", Fingerprint: Fingerprint(resolved),
+		Actor: "codex", IsRealProblem: true, Handled: true,
+		RootCause: "bounded issue", Action: "deployed bounded fix",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var beforeProblems, beforeCases int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM problems`).Scan(&beforeProblems); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM problem_cases`).Scan(&beforeCases); err != nil {
+		t.Fatal(err)
+	}
+
+	httpServer := httptest.NewServer(NewMCPHandler(store))
+	defer httpServer.Close()
+	client := mcpsdk.NewClient(&mcpsdk.Implementation{Name: "cora-test", Version: "v0"}, nil)
+	session, err := client.Connect(ctx, &mcpsdk.StreamableClientTransport{
+		Endpoint: httpServer.URL, DisableStandaloneSSE: true, MaxRetries: -1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+
+	firstResult := callMCPTool(t, ctx, session, "cora_retention_audit", map[string]any{
+		"product_line": "payments", "limit": 2,
+	})
+	var first retentionAuditOutput
+	decodeStructuredOutput(t, firstResult, &first)
+	if first.Audit.SchemaVersion != OnlineRetentionAuditSchemaVersion ||
+		first.Audit.Mode != onlineRetentionAuditMode || !first.Audit.ForensicAuditRequired {
+		t.Fatalf("audit contract=%+v", first.Audit)
+	}
+	if first.Audit.Summary.ProblemCount != 3 || first.Audit.Summary.ResolvedProblems != 1 ||
+		first.Audit.Summary.ProblemsWithHandledCase != 1 ||
+		first.Audit.Summary.ForensicAuditCandidates != 1 ||
+		first.Audit.Summary.RetentionEligibleProblems != 0 {
+		t.Fatalf("audit summary=%+v", first.Audit.Summary)
+	}
+	if len(first.Audit.Problems) != 2 || !first.Audit.HasMore || first.Audit.NextAfterProblemID == 0 {
+		t.Fatalf("first audit page=%+v", first.Audit)
+	}
+
+	secondResult := callMCPTool(t, ctx, session, "cora_retention_audit", map[string]any{
+		"product_line": "payments", "after_problem_id": first.Audit.NextAfterProblemID, "limit": 2,
+	})
+	var second retentionAuditOutput
+	decodeStructuredOutput(t, secondResult, &second)
+	if len(second.Audit.Problems) != 1 || second.Audit.HasMore {
+		t.Fatalf("second audit page=%+v", second.Audit)
+	}
+	all := append(append([]OnlineRetentionProblem{}, first.Audit.Problems...), second.Audit.Problems...)
+	byFingerprint := map[string]OnlineRetentionProblem{}
+	for _, problem := range all {
+		byFingerprint[problem.Fingerprint] = problem
+		if problem.RetentionEligible || !containsReason(problem.BlockingReasons, offlineReceiptReason) {
+			t.Fatalf("online audit authorized retention: %+v", problem)
+		}
+	}
+	if !containsReason(byFingerprint[Fingerprint(active)].BlockingReasons, "problem_active") ||
+		!containsReason(byFingerprint[Fingerprint(active)].BlockingReasons, "handled_case_missing") {
+		t.Fatalf("active blockers=%+v", byFingerprint[Fingerprint(active)])
+	}
+	if !containsReason(byFingerprint[Fingerprint(acknowledged)].BlockingReasons, "problem_active") ||
+		!containsReason(byFingerprint[Fingerprint(acknowledged)].BlockingReasons, "handled_case_missing") {
+		t.Fatalf("acknowledged blockers=%+v", byFingerprint[Fingerprint(acknowledged)])
+	}
+	if !byFingerprint[Fingerprint(resolved)].ForensicAuditCandidate ||
+		len(byFingerprint[Fingerprint(resolved)].BlockingReasons) != 1 {
+		t.Fatalf("resolved candidate=%+v", byFingerprint[Fingerprint(resolved)])
+	}
+	if _, exists := byFingerprint[Fingerprint(otherLine)]; exists {
+		t.Fatalf("cross-product-line problem leaked into audit")
+	}
+
+	var afterProblems, afterCases int
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM problems`).Scan(&afterProblems); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM problem_cases`).Scan(&afterCases); err != nil {
+		t.Fatal(err)
+	}
+	if beforeProblems != afterProblems || beforeCases != afterCases {
+		t.Fatalf("retention audit wrote production facts: problems %d->%d cases %d->%d",
+			beforeProblems, afterProblems, beforeCases, afterCases)
+	}
+}
+
+func containsReason(reasons []string, target string) bool {
+	for _, reason := range reasons {
+		if reason == target {
+			return true
+		}
+	}
+	return false
 }
 
 func callMCPTool(t *testing.T, ctx context.Context, session *mcpsdk.ClientSession, name string, arguments map[string]any) *mcpsdk.CallToolResult {

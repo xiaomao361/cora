@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-rule-candidate.v1.schema.json",
+  "title": "Cora Rule Candidate v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_id",
+    "iteration_run_id",
+    "product_line",
+    "rule_id",
+    "decision",
+    "category",
+    "reason",
+    "match",
+    "source_case_ids",
+    "evidence",
+    "risk",
+    "status",
+    "created_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "cora.rule-candidate.v1" },
+    "candidate_id": { "$ref": "#/$defs/stable_id" },
+    "iteration_run_id": { "$ref": "#/$defs/stable_id" },
+    "product_line": { "$ref": "#/$defs/non_empty" },
+    "rule_id": { "$ref": "#/$defs/non_empty" },
+    "decision": { "type": "string", "enum": ["attention", "observe", "ignore"] },
+    "category": { "$ref": "#/$defs/non_empty" },
+    "reason": { "$ref": "#/$defs/non_empty" },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "class": { "$ref": "#/$defs/non_empty" },
+        "class_contains": { "$ref": "#/$defs/string_or_non_empty_array" },
+        "method": { "$ref": "#/$defs/non_empty" },
+        "message_contains": { "$ref": "#/$defs/string_or_non_empty_array" },
+        "exception": { "$ref": "#/$defs/non_empty" },
+        "exception_contains": { "$ref": "#/$defs/string_or_non_empty_array" }
+      }
+    },
+    "source_case_ids": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["case_snapshot_id", "eval_run_id", "baseline_decision", "candidate_decision", "summary"],
+      "properties": {
+        "case_snapshot_id": { "$ref": "#/$defs/non_empty" },
+        "eval_run_id": { "$ref": "#/$defs/stable_id" },
+        "baseline_decision": { "type": "string", "enum": ["attention", "observe", "ignore"] },
+        "candidate_decision": { "type": "string", "enum": ["attention", "observe", "ignore"] },
+        "summary": { "$ref": "#/$defs/non_empty" },
+        "code_evidence_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/non_empty" }
+        },
+        "shadow_eval_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["false_positive", "false_negative", "frequency_escalation_reviewed"],
+      "properties": {
+        "false_positive": { "$ref": "#/$defs/non_empty" },
+        "false_negative": { "$ref": "#/$defs/non_empty" },
+        "frequency_escalation_reviewed": { "type": "boolean" }
+      }
+    },
+    "status": { "type": "string", "enum": ["proposed", "approved", "rejected", "superseded"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor", "reviewed_at", "reason"],
+      "properties": {
+        "actor": { "$ref": "#/$defs/non_empty" },
+        "reviewed_at": { "type": "string", "format": "date-time" },
+        "reason": { "$ref": "#/$defs/non_empty" }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "enum": ["approved", "rejected", "superseded"] } },
+        "required": ["status"]
+      },
+      "then": { "required": ["review"] }
+    }
+  ],
+  "$defs": {
+    "non_empty": { "type": "string", "minLength": 1 },
+    "stable_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "string_or_non_empty_array": {
+      "oneOf": [
+        { "$ref": "#/$defs/non_empty" },
+        {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/non_empty" }
+        }
+      ]
+    }
+  }
+}

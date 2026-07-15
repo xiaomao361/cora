@@ -38,24 +38,42 @@ type CoraDecision struct {
 }
 
 type AttentionItem struct {
-	ProblemID         int64     `json:"problem_id"`
-	ProductLine       string    `json:"product_line"`
-	Fingerprint       string    `json:"fingerprint"`
-	Service           string    `json:"service"`
-	Environment       string    `json:"environment"`
-	ExceptionType     string    `json:"exception_type"`
-	Logger            string    `json:"logger"`
-	Count             int64     `json:"count"`
-	LastSeen          time.Time `json:"last_seen"`
-	State             string    `json:"state"`
-	StateChangedAt    time.Time `json:"state_changed_at"`
-	Decision          string    `json:"decision"`
-	Category          string    `json:"category"`
-	RuleID            string    `json:"rule_id"`
-	Reason            string    `json:"reason"`
-	Source            string    `json:"source"`
-	ExperienceVersion string    `json:"experience_version,omitempty"`
-	DecidedAt         time.Time `json:"decided_at"`
+	ProblemID            int64                     `json:"problem_id"`
+	ProductLine          string                    `json:"product_line"`
+	Fingerprint          string                    `json:"fingerprint"`
+	Service              string                    `json:"service"`
+	Environment          string                    `json:"environment"`
+	ExceptionType        string                    `json:"exception_type"`
+	Logger               string                    `json:"logger"`
+	Count                int64                     `json:"count"`
+	LastSeen             time.Time                 `json:"last_seen"`
+	State                string                    `json:"state"`
+	StateChangedAt       time.Time                 `json:"state_changed_at"`
+	Decision             string                    `json:"decision"`
+	Category             string                    `json:"category"`
+	RuleID               string                    `json:"rule_id"`
+	Reason               string                    `json:"reason"`
+	Source               string                    `json:"source"`
+	ExperienceVersion    string                    `json:"experience_version,omitempty"`
+	DecidedAt            time.Time                 `json:"decided_at"`
+	IncidentKey          string                    `json:"incident_key,omitempty"`
+	IncidentProblemCount int                       `json:"incident_problem_count,omitempty"`
+	RelatedCount         int                       `json:"related_problem_count,omitempty"`
+	IncidentServices     []string                  `json:"incident_services,omitempty"`
+	SharedTraceIDs       []string                  `json:"shared_trace_ids,omitempty"`
+	RelatedProblems      []AttentionRelatedProblem `json:"related_problems,omitempty"`
+}
+
+type AttentionRelatedProblem struct {
+	ProblemID      int64     `json:"problem_id"`
+	Service        string    `json:"service"`
+	Fingerprint    string    `json:"fingerprint"`
+	State          string    `json:"state"`
+	Decision       string    `json:"decision"`
+	Category       string    `json:"category"`
+	Count          int64     `json:"count"`
+	LastSeen       time.Time `json:"last_seen"`
+	SharedTraceIDs []string  `json:"shared_trace_ids"`
 }
 
 type Cora interface {
@@ -80,12 +98,14 @@ type experienceRule struct {
 }
 
 type ruleMatcher struct {
-	Class             string     `json:"class"`
-	ClassContains     stringList `json:"class_contains"`
-	Method            string     `json:"method"`
-	MessageContains   stringList `json:"message_contains"`
-	Exception         string     `json:"exception"`
-	ExceptionContains stringList `json:"exception_contains"`
+	Class                            string     `json:"class"`
+	ClassContains                    stringList `json:"class_contains"`
+	Method                           string     `json:"method"`
+	MessageContains                  stringList `json:"message_contains"`
+	Exception                        string     `json:"exception"`
+	ExceptionContains                stringList `json:"exception_contains"`
+	BreadcrumbMessageContains        stringList `json:"breadcrumb_message_contains"`
+	ExcludeBreadcrumbMessageContains stringList `json:"exclude_breadcrumb_message_contains"`
 }
 
 type stringList []string
@@ -215,12 +235,19 @@ func (match ruleMatcher) matches(event Event) bool {
 	classText := event.Logger + "\n" + event.Stacktrace
 	methodText := event.Stacktrace
 	exceptionText := event.ExceptionType + "\n" + event.Stacktrace
+	var breadcrumbText strings.Builder
+	for _, breadcrumb := range event.Breadcrumbs {
+		breadcrumbText.WriteString(breadcrumb.Message)
+		breadcrumbText.WriteByte('\n')
+	}
 	return containsIfSet(classText, match.Class) &&
 		containsAnyIfSet(classText, match.ClassContains) &&
 		containsIfSet(methodText, match.Method) &&
 		containsAnyIfSet(event.Message, match.MessageContains) &&
 		containsIfSet(exceptionText, match.Exception) &&
-		containsAnyIfSet(exceptionText, match.ExceptionContains)
+		containsAnyIfSet(exceptionText, match.ExceptionContains) &&
+		containsAnyIfSet(breadcrumbText.String(), match.BreadcrumbMessageContains) &&
+		containsNoneIfSet(breadcrumbText.String(), match.ExcludeBreadcrumbMessageContains)
 }
 
 func containsIfSet(text, pattern string) bool {
@@ -237,4 +264,13 @@ func containsAnyIfSet(text string, patterns []string) bool {
 		}
 	}
 	return false
+}
+
+func containsNoneIfSet(text string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if strings.Contains(text, pattern) {
+			return false
+		}
+	}
+	return true
 }

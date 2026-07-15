@@ -114,6 +114,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	aggregator := cora.NewAggregator(store, *maxActive)
+	build := buildinfo.Current()
+	log.Printf("Cora Server starting version=%s commit=%s database=%q flush_interval=%s max_active=%d auth_enabled=%t",
+		build.Version, build.Commit, *dbPath, *flushInterval, *maxActive, bearerToken != "")
 	go aggregator.Run(ctx, *flushInterval)
 	server := &http.Server{
 		Addr: *addr, Handler: cora.HandlerWithOptions(store,
@@ -130,6 +133,7 @@ func main() {
 		}
 	}()
 	<-ctx.Done()
+	log.Printf("Cora Server shutdown requested")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
@@ -138,4 +142,7 @@ func main() {
 	if err := aggregator.Flush(shutdownCtx); err != nil {
 		log.Printf("final flush: %v", err)
 	}
+	stats := aggregator.Stats()
+	log.Printf("Cora Server stopped flushes=%d flush_failures=%d flushed_events=%d dropped_events=%d",
+		stats.Flushes, stats.FlushFailures, stats.FlushedEvents, stats.DroppedEvents)
 }

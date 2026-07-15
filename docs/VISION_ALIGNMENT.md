@@ -36,8 +36,9 @@ protect both HTTP and MCP surfaces.
 
 The first MCP slice is intentionally small:
 
-1. `cora_list_attention`: list current attention/observe Problems for one
-   explicit product line, with decision reason and freshness.
+1. `cora_list_attention`: list current attention/observe incidents for one
+   explicit product line, grouping Problems with shared representative trace IDs
+   while returning the representative and related Problem references.
 2. `cora_get_problem`: return representative samples, trends, node distribution,
    release/environment context, and prior cases for one service-scoped Problem.
 3. `cora_record_outcome`: write the original four-field result -- real problem,

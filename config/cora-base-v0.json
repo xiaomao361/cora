@@ -17,8 +17,8 @@
     {
       "product_line": "gbjk-zhifu",
       "experience_pack": "internal/cora/experience/gbjk-zhifu.cora-v0.json",
-      "experience_version": "cora-gbjk-v0.1.0",
-      "experience_sha256": "c6fe3ecbba879a9b43195a42dbda87548add78a2e6b0012906bdde44953a5fd6"
+      "experience_version": "cora-gbjk-v0.1.1",
+      "experience_sha256": "f3fe0618419c6aa44d45231d99418b67580ecdfcbf04a66441be252ed5d327b4"
     }
   ],
   "evaluation": {

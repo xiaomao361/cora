@@ -18,7 +18,7 @@ func TestCoraShadowEvalProfilesLeakageAndLabelConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Model != "cora" || report.ModelVersion != "0.1.0" || report.ExperienceVersion != "cora-gbjk-v0.1.0" {
+	if report.Model != "cora" || report.ModelVersion != "0.1.0" || report.ExperienceVersion != "cora-gbjk-v0.1.1" {
 		t.Fatalf("model identity=%s@%s experience=%s", report.Model, report.ModelVersion, report.ExperienceVersion)
 	}
 	if report.DataQuality.Rows != 4 || report.DataQuality.ParsedTimestamps != 2 || report.DataQuality.TimeSplitAvailable {

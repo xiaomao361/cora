@@ -73,14 +73,16 @@ is outside the current direction.
 ## Guanbai experience baseline
 
 The embedded `gbjk-zhifu` pack is the first versioned product-line Cora Pack
-experience baseline. It contains 130 reviewed rules:
+experience baseline. It contains 131 reviewed rules:
 
 - 27 `attention`
 - 41 `observe`
-- 62 `ignore`
+- 63 `ignore`
 
 The original priority is preserved: `attention`, then `observe`, then `ignore`.
-Rules match stable logger/class, stack method, message, and exception fragments.
+Rules match stable logger/class, stack method, message, exception, and bounded breadcrumb-message
+fragments. A narrow breadcrumb exclusion keeps one business-confirmed normal validation branch from
+being swallowed by the broader Redisson/Seata attention rules.
 No raw production logs, labeled CSV rows, legacy model weights, credentials, or
 source-system reports are copied into Cora.
 
@@ -110,7 +112,7 @@ Cora evaluation CSV and writes aggregate JSON plus a redacted Markdown report.
 The baseline source SHA-256 is stored in the report so a later export cannot be
 mistaken for the same dataset.
 
-The current 1,404-row baseline found:
+The current 1,404-row baseline, produced for `cora-gbjk-v0.1.0`, found:
 
 - 31 attention, 559 observe, and 814 ignore decisions.
 - 60.2% decisive coverage and 99.3% agreement among decisive rows.
@@ -126,7 +128,9 @@ The current 1,404-row baseline found:
 Therefore the experience pack is suitable as a conservative, explainable rule
 layer, but this dataset is not trustworthy for time-split model evaluation or
 production-fingerprint accuracy. Historical statistical weights remain
-intentionally unloaded. A fresh export must preserve full timestamps,
+intentionally unloaded. The `v0.1.1` narrow normal-business-branch rule is covered by live Case
+evidence and golden regression tests; the old CSV cannot exercise it because it lacks breadcrumbs.
+A fresh export must preserve full timestamps,
 exception type, stacktrace, stable source/service, and reviewed three-way labels
 before statistical model adoption is reconsidered.
 

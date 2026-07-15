@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -30,6 +31,9 @@ func RunMulti(ctx context.Context, runtime RuntimeConfig) error {
 	if err != nil {
 		return err
 	}
+	build := buildinfo.Current()
+	log.Printf("Cora Agent starting mode=multi version=%s commit=%s targets=%d health=%s:%d",
+		build.Version, build.Commit, len(runtime.Targets), runtime.Health.Address, runtime.Health.Port)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	runtimes := make([]*targetRuntime, len(runtime.Targets))
@@ -103,6 +107,11 @@ func RunMulti(ctx context.Context, runtime RuntimeConfig) error {
 		shutdownCancel()
 	}
 	workers.Wait()
+	resultText := "none"
+	if result != nil {
+		resultText = result.Error()
+	}
+	log.Printf("Cora Agent stopped mode=multi targets=%d error=%q", len(runtime.Targets), resultText)
 	return result
 }
 

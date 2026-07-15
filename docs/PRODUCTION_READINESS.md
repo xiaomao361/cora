@@ -57,7 +57,8 @@ Cora 不是零丢失的事件总线，也不是承诺发现全部故障的监控
 
 - Server 同进程提供受 bearer 保护的 Streamable HTTP MCP；
 - `cora_list_attention` 返回“现在可能值得关注”的问题，而不是全部历史 Problem；其中
-  `acknowledged + handled=false` 继续可见，直到后续 outcome 将其处理完成；
+  `acknowledged + handled=false` 继续可见，直到后续 outcome 将其处理完成；共享代表 trace 的
+  Problem 只在读取面归为一个 incident，原始事实保持独立；
 - `cora_get_problem` 返回代表样本、趋势、节点和已有 case；
 - `cora_record_outcome` 回写真问题、是否处理、根因、动作，并生成不可变产品线 case；
 - Problem 至少支持 `new / acknowledged / resolved / recurring`，避免重复打扰。
@@ -84,12 +85,15 @@ Cora 不是零丢失的事件总线，也不是承诺发现全部故障的监控
 
 ### 4. 真实 canary
 
-尚未执行。这是当前代码完成后的下一道门，而不是继续扩展产品功能。
+基础 canary 已执行：真实 Server、两个 Agent、health/readiness、MCP 拉取/回写和首条不可变
+case 已验证。完整 canary 尚未完成；当前下一道门是补齐故障演练与连续观测，而不是继续扩展
+产品功能。
 
-- 先部署 1 Server + 1 Agent + 1–2 个真实服务；
+- 保持当前 1 Server + 2 Agent 的受控范围，不继续扩大服务面；
 - 默认从文件末尾开始，不回放历史洪峰；
 - 连续运行至少 72 小时；
-- 至少完成一次 MCP 拉取、调查、结果回写和 case 再读取；
+- 重复验证 MCP 拉取、调查、结果回写和 case 再读取；
+- 完成 SQLite/positions 恢复、Server 不可达、Agent 重启、日志轮转和磁盘不足演练；
 - 至少验证一次“发现并处理一个真实问题”，这是价值验收，不要求覆盖全部问题。
 
 ## 明确后置

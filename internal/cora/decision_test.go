@@ -16,12 +16,12 @@ func TestCoraExperiencePackGoldenCases(t *testing.T) {
 		t.Fatal(err)
 	}
 	pack := core.(*ruleCora).packs["gbjk-zhifu"]
-	if pack.Version != "cora-gbjk-v0.1.0" {
+	if pack.Version != "cora-gbjk-v0.1.1" {
 		t.Fatalf("experience version=%q", pack.Version)
 	}
 	rules := pack.Rules
-	if len(rules) != 130 {
-		t.Fatalf("loaded %d Cora rules, want 130", len(rules))
+	if len(rules) != 131 {
+		t.Fatalf("loaded %d Cora rules, want 131", len(rules))
 	}
 
 	tests := []struct {
@@ -45,6 +45,42 @@ func TestCoraExperiencePackGoldenCases(t *testing.T) {
 				Logger: "com.guanbai.RouterServiceImpl", ExceptionType: "TokenException",
 				Message: "token expired", Stacktrace: "at com.guanbai.RouterServiceImpl.checkAccess(RouterServiceImpl.java:42)"},
 			decision: DecisionIgnore, ruleID: "ig_03", source: "experience_pack",
+		},
+		{
+			name: "confirmed normal subsidy validation wrapped by redisson is ignored",
+			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
+				Logger: "com.gbjk.common.redis.service.RedissonService", ExceptionType: "logback.ERROR",
+				Message:     "分布式锁Runnable方法执行失败：",
+				Stacktrace:  "at com.gbjk.common.redis.service.RedissonService.lockFun(RedissonService.java:118)",
+				Breadcrumbs: []Breadcrumb{{Message: "事务日志切面回滚，异常信息：[特殊人群补助]未在投保信息中找到"}}},
+			decision: DecisionIgnore, ruleID: "ig_63", source: "experience_pack",
+		},
+		{
+			name: "confirmed normal subsidy validation wrapped by seata is ignored",
+			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
+				Logger:        "com.gbjk.common.security.handler.GlobalExceptionHandler",
+				ExceptionType: "com.gbjk.common.core.exception.UtilException",
+				Message:       "请求地址'/inner/cases/addClaimCasesV1',发生未知异常.",
+				Stacktrace:    "at io.seata.tm.api.DefaultGlobalTransaction.rollback(DefaultGlobalTransaction.java:171)",
+				Breadcrumbs:   []Breadcrumb{{Message: "异常信息：[特殊人群补助]未在投保信息中找到"}}},
+			decision: DecisionIgnore, ruleID: "ig_63", source: "experience_pack",
+		},
+		{
+			name: "other redisson execution failure still needs attention",
+			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
+				Logger: "com.gbjk.common.redis.service.RedissonService", ExceptionType: "logback.ERROR",
+				Message:    "分布式锁Runnable方法执行失败：",
+				Stacktrace: "at com.gbjk.common.redis.service.RedissonService.lockFun(RedissonService.java:118)"},
+			decision: DecisionAttention, ruleID: "at_02", source: "experience_pack",
+		},
+		{
+			name: "other seata exception still needs attention",
+			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
+				Logger:        "com.gbjk.common.security.handler.GlobalExceptionHandler",
+				ExceptionType: "com.gbjk.common.core.exception.UtilException",
+				Message:       "unknown failure",
+				Stacktrace:    "at io.seata.tm.api.DefaultGlobalTransaction.rollback(DefaultGlobalTransaction.java:171)"},
+			decision: DecisionAttention, ruleID: "at_03", source: "experience_pack",
 		},
 		{
 			name: "unmatched Guanbai error stays observable",

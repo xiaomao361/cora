@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://claracore.local/schemas/cora-iteration-snapshot.v1.schema.json",
+  "title": "Cora Iteration Snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "product_line", "business_date", "timezone", "window_start",
+    "window_end", "baseline_start", "baseline_days", "generated_at", "summary", "problems"
+  ],
+  "properties": {
+    "schema_version": { "const": "cora.iteration-snapshot.v1" },
+    "product_line": { "$ref": "#/$defs/non_empty" },
+    "business_date": { "type": "string", "format": "date" },
+    "timezone": { "$ref": "#/$defs/non_empty" },
+    "window_start": { "type": "string", "format": "date-time" },
+    "window_end": { "type": "string", "format": "date-time" },
+    "baseline_start": { "type": "string", "format": "date-time" },
+    "baseline_days": { "type": "integer", "minimum": 1, "maximum": 30 },
+    "generated_at": { "type": "string", "format": "date-time" },
+    "summary": { "$ref": "#/$defs/summary" },
+    "problems": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/problem" }
+    }
+  },
+  "$defs": {
+    "non_empty": { "type": "string", "minLength": 1 },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "matched_problem_count", "returned_problem_count", "occurrence_count",
+        "decision_problem_counts", "decision_occurrence_counts", "truncated"
+      ],
+      "properties": {
+        "matched_problem_count": { "type": "integer", "minimum": 0 },
+        "returned_problem_count": { "type": "integer", "minimum": 0 },
+        "occurrence_count": { "type": "integer", "minimum": 0 },
+        "decision_problem_counts": { "$ref": "#/$defs/count_map" },
+        "decision_occurrence_counts": { "$ref": "#/$defs/count_map" },
+        "truncated": { "type": "boolean" }
+      }
+    },
+    "count_map": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "problem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "problem_id", "product_line", "service", "fingerprint", "environment",
+        "exception_type", "logger", "state", "total_count", "first_seen", "last_seen",
+        "decision", "category", "rule_id", "reason", "source", "decided_at",
+        "window_count", "prior_daily_counts", "prior_daily_average", "node_counts", "case_ids"
+      ],
+      "properties": {
+        "problem_id": { "type": "integer", "minimum": 1 },
+        "product_line": { "$ref": "#/$defs/non_empty" },
+        "service": { "$ref": "#/$defs/non_empty" },
+        "fingerprint": { "$ref": "#/$defs/non_empty" },
+        "environment": { "type": "string" },
+        "exception_type": { "type": "string" },
+        "logger": { "type": "string" },
+        "state": { "$ref": "#/$defs/non_empty" },
+        "total_count": { "type": "integer", "minimum": 0 },
+        "first_seen": { "type": "string", "format": "date-time" },
+        "last_seen": { "type": "string", "format": "date-time" },
+        "decision": { "$ref": "#/$defs/non_empty" },
+        "category": { "type": "string" },
+        "rule_id": { "type": "string" },
+        "reason": { "type": "string" },
+        "source": { "type": "string" },
+        "experience_version": { "type": "string" },
+        "decided_at": { "type": "string", "format": "date-time" },
+        "window_count": { "type": "integer", "minimum": 1 },
+        "prior_daily_counts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["business_date", "count"],
+            "properties": {
+              "business_date": { "type": "string", "format": "date" },
+              "count": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "prior_daily_average": { "type": "number", "minimum": 0 },
+        "frequency_ratio": { "type": "number", "minimum": 0 },
+        "node_counts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["node", "count"],
+            "properties": {
+              "node": { "$ref": "#/$defs/non_empty" },
+              "deployment_group": { "type": "string" },
+              "count": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "case_ids": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 }
+        }
+      }
+    }
+  }
+}

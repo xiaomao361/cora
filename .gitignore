@@ -3,6 +3,8 @@
 /cora-eval
 /cora-canary
 /dist/
+/out/
+/config/cora-agent-gb-order-*.yml
 .DS_Store
 *.db
 *.db-shm

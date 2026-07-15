@@ -80,7 +80,7 @@ func main() {
 	}
 	expected := map[string]bool{
 		"cora_list_attention": false, "cora_get_problem": false, "cora_record_outcome": false,
-		"cora_export_cases": false,
+		"cora_export_cases": false, "cora_iteration_snapshot": false,
 	}
 	toolNames := make([]string, 0, len(tools.Tools))
 	for _, tool := range tools.Tools {

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-code-evidence.v1.schema.json",
+  "title": "Cora Code Evidence v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "product_line",
+    "service",
+    "fingerprint",
+    "source",
+    "status",
+    "summary",
+    "references",
+    "collected_at"
+  ],
+  "properties": {
+    "schema_version": { "const": "cora.code-evidence.v1" },
+    "evidence_id": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "product_line": { "type": "string", "minLength": 1 },
+    "service": { "type": "string", "minLength": 1 },
+    "fingerprint": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "source": { "const": "atlas" },
+    "status": { "type": "string", "enum": ["verified", "not_found"] },
+    "summary": { "type": "string", "minLength": 1 },
+    "references": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "collected_at": { "type": "string", "format": "date-time" }
+  }
+}
