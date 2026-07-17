@@ -43,6 +43,7 @@ type OnlineRetentionProblem struct {
 	ProductLine            string    `json:"product_line"`
 	Service                string    `json:"service"`
 	Fingerprint            string    `json:"fingerprint"`
+	RootCauseKey           string    `json:"root_cause_key"`
 	State                  string    `json:"state"`
 	Decision               string    `json:"decision"`
 	OccurrenceCount        int64     `json:"occurrence_count"`
@@ -107,15 +108,16 @@ func (s *Store) OnlineRetentionAudit(ctx context.Context, productLine string, af
 	}
 
 	rows, err := tx.QueryContext(ctx, `
-		SELECT p.id, p.product_line, p.service, p.fingerprint, p.state,
+		SELECT p.id, p.product_line, p.service, p.fingerprint, p.root_cause_key, p.state,
 		       COALESCE(d.decision, 'none'), p.count, p.last_seen,
 		       COUNT(c.id), COALESCE(SUM(CASE WHEN c.handled = 1 THEN 1 ELSE 0 END), 0)
 		FROM problems p
 		LEFT JOIN cora_decisions d ON d.product_line = p.product_line
 		 AND d.service = p.service AND d.fingerprint = p.fingerprint
+		 AND d.root_cause_key = p.root_cause_key
 		LEFT JOIN problem_cases c ON c.problem_id = p.id AND c.product_line = p.product_line
 		WHERE p.product_line = ? AND p.id > ?
-		GROUP BY p.id, p.product_line, p.service, p.fingerprint, p.state,
+		GROUP BY p.id, p.product_line, p.service, p.fingerprint, p.root_cause_key, p.state,
 		         d.decision, p.count, p.last_seen
 		ORDER BY p.id
 		LIMIT ?`, productLine, afterProblemID, limit+1)
@@ -127,7 +129,7 @@ func (s *Store) OnlineRetentionAudit(ctx context.Context, productLine string, af
 		var item OnlineRetentionProblem
 		var lastSeen string
 		if err := rows.Scan(&item.ProblemID, &item.ProductLine, &item.Service, &item.Fingerprint,
-			&item.State, &item.Decision, &item.OccurrenceCount, &lastSeen, &item.CaseCount,
+			&item.RootCauseKey, &item.State, &item.Decision, &item.OccurrenceCount, &lastSeen, &item.CaseCount,
 			&item.HandledCaseCount); err != nil {
 			return OnlineRetentionAudit{}, err
 		}

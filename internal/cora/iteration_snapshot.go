@@ -48,6 +48,7 @@ type IterationProblem struct {
 	FirstSeen         time.Time             `json:"first_seen"`
 	LastSeen          time.Time             `json:"last_seen"`
 	Decision          string                `json:"decision"`
+	RootCauseKey      string                `json:"root_cause_key"`
 	Category          string                `json:"category"`
 	RuleID            string                `json:"rule_id"`
 	Reason            string                `json:"reason"`
@@ -118,13 +119,15 @@ func (s *Store) IterationSnapshot(ctx context.Context, productLine, businessDate
 	rows, err := tx.QueryContext(ctx, `
 		SELECT p.id, p.product_line, p.service, p.fingerprint, p.environment,
 		       p.exception_type, p.logger, p.state, p.count, p.first_seen, p.last_seen,
-		       d.decision, d.category, d.rule_id, d.reason, d.source,
+		       d.decision, d.root_cause_key, d.category, d.rule_id, d.reason, d.source,
 		       d.experience_version, d.decided_at, t.count, t.window_end
 		FROM problems p
 		JOIN cora_decisions d ON d.product_line = p.product_line
 		 AND d.service = p.service AND d.fingerprint = p.fingerprint
+		 AND d.root_cause_key = p.root_cause_key
 		JOIN trend_points t ON t.product_line = p.product_line
 		 AND t.service = p.service AND t.fingerprint = p.fingerprint
+		 AND t.root_cause_key = p.root_cause_key
 		WHERE p.product_line = ? AND t.window_end > ? AND t.window_end <= ?
 		ORDER BY p.id, t.window_end`, productLine,
 		baselineStart.Format(time.RFC3339Nano), windowEnd.Format(time.RFC3339Nano))
@@ -139,7 +142,8 @@ func (s *Store) IterationSnapshot(ctx context.Context, productLine, businessDate
 		var trendCount int64
 		if err := rows.Scan(&item.ProblemID, &item.ProductLine, &item.Service, &item.Fingerprint,
 			&item.Environment, &item.ExceptionType, &item.Logger, &item.State, &item.TotalCount,
-			&firstSeen, &lastSeen, &item.Decision, &item.Category, &item.RuleID, &item.Reason,
+			&firstSeen, &lastSeen, &item.Decision, &item.RootCauseKey, &item.Category,
+			&item.RuleID, &item.Reason,
 			&item.Source, &item.ExperienceVersion, &decidedAt, &trendCount, &trendEnd); err != nil {
 			return IterationSnapshot{}, err
 		}
@@ -232,26 +236,26 @@ func (s *Store) IterationSnapshot(ctx context.Context, productLine, businessDate
 func attachIterationNodeCounts(ctx context.Context, tx *sql.Tx, productLine string, start, end time.Time, problems []IterationProblem) error {
 	byIdentity := map[string]*IterationProblem{}
 	for index := range problems {
-		byIdentity[problems[index].Service+"\x00"+problems[index].Fingerprint] = &problems[index]
+		byIdentity[problems[index].Service+"\x00"+problems[index].Fingerprint+"\x00"+problems[index].RootCauseKey] = &problems[index]
 	}
 	rows, err := tx.QueryContext(ctx, `
-		SELECT service, fingerprint, node, deployment_group, SUM(count)
+		SELECT service, fingerprint, root_cause_key, node, deployment_group, SUM(count)
 		FROM node_trend_points
 		WHERE product_line = ? AND window_end > ? AND window_end <= ?
-		GROUP BY service, fingerprint, node, deployment_group
-		ORDER BY service, fingerprint, SUM(count) DESC, node`, productLine,
+		GROUP BY service, fingerprint, root_cause_key, node, deployment_group
+		ORDER BY service, fingerprint, root_cause_key, SUM(count) DESC, node`, productLine,
 		start.Format(time.RFC3339Nano), end.Format(time.RFC3339Nano))
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var service, fingerprint, node, group string
+		var service, fingerprint, rootCauseKey, node, group string
 		var count int64
-		if err := rows.Scan(&service, &fingerprint, &node, &group, &count); err != nil {
+		if err := rows.Scan(&service, &fingerprint, &rootCauseKey, &node, &group, &count); err != nil {
 			return err
 		}
-		if item := byIdentity[service+"\x00"+fingerprint]; item != nil {
+		if item := byIdentity[service+"\x00"+fingerprint+"\x00"+rootCauseKey]; item != nil {
 			item.NodeCounts = append(item.NodeCounts, IterationNodeCount{Node: node, DeploymentGroup: group, Count: count})
 		}
 	}

@@ -1,0 +1,31 @@
+{
+  "schema_version": "cora.experience-pack.v1",
+  "product_line": "payments",
+  "version": "payments-example-v1",
+  "default_decision": "observe",
+  "priority_order": ["attention", "observe", "ignore"],
+  "rules": [
+    {
+      "id": "attention.database-unavailable",
+      "decision": "attention",
+      "category": "database",
+      "reason": "database connectivity failures require review",
+      "trace_role": "cause",
+      "match": {
+        "class": "DatabaseClient"
+      }
+    },
+    {
+      "id": "ignore.client-cancelled",
+      "decision": "ignore",
+      "root_cause_key": "payments.client-cancelled",
+      "category": "client-cancelled",
+      "reason": "the caller cancelled before processing completed",
+      "trace_role": "cause",
+      "match": {
+        "class": "CheckoutHandler",
+        "message_contains": ["client cancelled"]
+      }
+    }
+  ]
+}

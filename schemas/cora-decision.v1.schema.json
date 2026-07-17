@@ -7,11 +7,13 @@
   "required": ["decision", "category", "rule_id", "reason", "source", "decided_at"],
   "properties": {
     "decision": { "type": "string", "enum": ["attention", "observe", "ignore"] },
+    "root_cause_key": { "type": "string" },
     "category": { "type": "string", "minLength": 1 },
     "rule_id": { "type": "string", "minLength": 1 },
     "reason": { "type": "string", "minLength": 1 },
     "source": { "type": "string", "enum": ["experience_pack", "framework_default"] },
     "experience_version": { "type": "string" },
+    "trace_role": { "type": "string", "enum": ["unknown", "wrapper", "cause"] },
     "decided_at": { "type": "string", "format": "date-time" }
   }
 }

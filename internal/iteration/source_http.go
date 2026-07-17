@@ -104,9 +104,10 @@ func (source *HTTPSource) IterationSnapshot(ctx context.Context, productLine, bu
 	return response.Snapshot, nil
 }
 
-func (source *HTTPSource) Problem(ctx context.Context, productLine, service, fingerprint string) (cora.ProblemDetail, error) {
+func (source *HTTPSource) Problem(ctx context.Context, productLine, service, fingerprint, rootCauseKey string) (cora.ProblemDetail, error) {
 	result, err := source.call(ctx, "cora_get_problem", map[string]any{
 		"product_line": productLine, "service": service, "fingerprint": fingerprint,
+		"root_cause_key": rootCauseKey,
 	})
 	if err != nil {
 		return cora.ProblemDetail{}, err

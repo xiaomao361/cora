@@ -29,9 +29,10 @@ type listAttentionOutput struct {
 }
 
 type getProblemInput struct {
-	ProductLine string `json:"product_line" jsonschema:"product line owning the problem"`
-	Service     string `json:"service" jsonschema:"service owning the problem"`
-	Fingerprint string `json:"fingerprint" jsonschema:"Cora problem fingerprint"`
+	ProductLine  string `json:"product_line" jsonschema:"product line owning the problem"`
+	Service      string `json:"service" jsonschema:"service owning the problem"`
+	Fingerprint  string `json:"fingerprint" jsonschema:"Cora problem fingerprint"`
+	RootCauseKey string `json:"root_cause_key,omitempty" jsonschema:"stored root cause identity; omit to select the latest matching problem"`
 }
 
 type getProblemOutput struct {
@@ -64,6 +65,7 @@ type recordOutcomeInput struct {
 	ProductLine   string `json:"product_line" jsonschema:"product line owning the problem"`
 	Service       string `json:"service" jsonschema:"service owning the problem"`
 	Fingerprint   string `json:"fingerprint" jsonschema:"Cora problem fingerprint"`
+	RootCauseKey  string `json:"root_cause_key,omitempty" jsonschema:"stored root cause identity; omit to select the latest matching problem"`
 	Actor         string `json:"actor" jsonschema:"agent or engineer recording the result"`
 	IsRealProblem bool   `json:"is_real_problem" jsonschema:"whether investigation confirmed a real problem"`
 	Handled       bool   `json:"handled" jsonschema:"whether the problem was handled or intentionally closed"`
@@ -99,7 +101,7 @@ func NewMCPHandler(store *Store) http.Handler {
 		Name:        "cora_get_problem",
 		Description: "Get one service-scoped problem with bounded samples, trends, nodes, related problems sharing representative trace IDs, decision, and immutable cases.",
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input getProblemInput) (*mcpsdk.CallToolResult, getProblemOutput, error) {
-		detail, err := store.GetProblem(ctx, input.ProductLine, input.Service, input.Fingerprint)
+		detail, err := store.GetProblemCause(ctx, input.ProductLine, input.Service, input.Fingerprint, input.RootCauseKey)
 		if errors.Is(err, sql.ErrNoRows) {
 			err = fmt.Errorf("problem not found in product line %q and service %q", input.ProductLine, input.Service)
 		}
@@ -132,7 +134,8 @@ func NewMCPHandler(store *Store) http.Handler {
 	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input recordOutcomeInput) (*mcpsdk.CallToolResult, recordOutcomeOutput, error) {
 		item, err := store.RecordOutcome(ctx, Outcome{
 			ProductLine: input.ProductLine, Service: input.Service, Fingerprint: input.Fingerprint,
-			Actor: input.Actor, IsRealProblem: input.IsRealProblem, Handled: input.Handled,
+			RootCauseKey: input.RootCauseKey,
+			Actor:        input.Actor, IsRealProblem: input.IsRealProblem, Handled: input.Handled,
 			RootCause: input.RootCause, Action: input.Action,
 		})
 		if errors.Is(err, sql.ErrNoRows) {

@@ -1,0 +1,45 @@
+server:
+  http_listen_address: 127.0.0.1
+  http_listen_port: 9088
+  grpc_listen_port: 0
+
+positions:
+  filename: /var/lib/cora-agent/positions.json
+
+clients:
+  - url: https://cora.example.com/v1/events:batch
+    bearer_token_file: /etc/cora-agent/auth.token
+
+defaults:
+  product_line: payments
+  environment: production
+  timezone: UTC
+
+agent:
+  start_at: end
+  batch_size: 100
+  batch_wait: 1s
+  poll_interval: 250ms
+  request_timeout: 3s
+  max_retries: 5
+  min_backoff: 250ms
+  max_backoff: 5s
+  max_event_bytes: 262144
+  max_batch_bytes: 1572864
+
+scrape_configs:
+  - job_name: checkout-api
+    static_configs:
+      - labels:
+          app: checkout-api
+          node: checkout-01
+          deployment_group: checkout
+          __path__: /var/log/checkout/application.log
+
+  - job_name: ledger-worker
+    static_configs:
+      - labels:
+          app: ledger-worker
+          node: ledger-01
+          deployment_group: ledger
+          __path__: /var/log/ledger/worker.log

@@ -24,7 +24,7 @@ func main() {
 	timezone := flag.String("timezone", "Asia/Shanghai", "IANA timezone for the business date")
 	outputRoot := flag.String("output-root", "out/iterations", "immutable iteration artifact root")
 	runID := flag.String("run-id", "", "stable run identifier; defaults to date and current UTC time")
-	packManifest := flag.String("pack-manifest", "config/cora-base-v0.json", "local reviewed Pack manifest")
+	packManifest := flag.String("pack-manifest", "", "private reviewed Pack manifest")
 	codeEvidence := flag.String("code-evidence", "", "optional Atlas evidence JSONL, explicitly scoped by product line and fingerprint")
 	pageSize := flag.Int("case-page-size", 100, "case export page size from 1 to 200")
 	attentionLimit := flag.Int("attention-limit", 200, "current attention incident limit from 1 to 200")
@@ -38,8 +38,8 @@ func main() {
 		_ = json.NewEncoder(os.Stdout).Encode(buildinfo.Current())
 		return
 	}
-	if *serverURL == "" || *tokenFile == "" || *productLine == "" {
-		fatal(fmt.Errorf("server-url, auth-token-file, and product-line are required"))
+	if *serverURL == "" || *tokenFile == "" || *productLine == "" || *packManifest == "" {
+		fatal(fmt.Errorf("server-url, auth-token-file, product-line, and pack-manifest are required"))
 	}
 	location, err := time.LoadLocation(*timezone)
 	if err != nil {

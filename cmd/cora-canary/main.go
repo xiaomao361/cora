@@ -36,7 +36,7 @@ type attentionItem struct {
 }
 
 func main() {
-	serverURL := flag.String("server-url", "", "Cora Server base URL, for example http://10.0.0.10:8080")
+	serverURL := flag.String("server-url", "", "Cora Server base URL, for example https://cora.example.com")
 	tokenFile := flag.String("auth-token-file", "", "file containing the Server bearer token")
 	productLine := flag.String("product-line", "", "explicit product line to query")
 	showVersion := flag.Bool("version", false, "print build identity and exit")

@@ -22,7 +22,7 @@ type Source interface {
 	Health(context.Context) (ServerSnapshot, error)
 	Attention(context.Context, string, int) ([]cora.AttentionItem, error)
 	IterationSnapshot(context.Context, string, string, string, int, int) (cora.IterationSnapshot, error)
-	Problem(context.Context, string, string, string) (cora.ProblemDetail, error)
+	Problem(context.Context, string, string, string, string) (cora.ProblemDetail, error)
 	ExportCases(context.Context, string, int64, int64, int) (cora.CaseExportPage, error)
 	Close() error
 }
@@ -117,9 +117,11 @@ type DailyProblem struct {
 	ProductLine        string              `json:"product_line"`
 	Service            string              `json:"service"`
 	Fingerprint        string              `json:"fingerprint"`
+	RootCauseKey       string              `json:"root_cause_key"`
 	State              string              `json:"state"`
 	Decision           string              `json:"decision"`
 	Category           string              `json:"category"`
+	Reason             string              `json:"reason"`
 	RuleID             string              `json:"rule_id"`
 	WindowCount        int64               `json:"window_count"`
 	PriorDailyAverage  float64             `json:"prior_daily_average"`
@@ -141,6 +143,7 @@ type NodeCount struct {
 type FrequencyEscalation struct {
 	Service           string   `json:"service"`
 	Fingerprint       string   `json:"fingerprint"`
+	RootCauseKey      string   `json:"root_cause_key"`
 	RuleID            string   `json:"rule_id"`
 	WindowCount       int64    `json:"window_count"`
 	PriorDailyAverage float64  `json:"prior_daily_average"`
@@ -165,6 +168,7 @@ type TriageResult struct {
 	ProductLine         string   `json:"product_line"`
 	Service             string   `json:"service"`
 	Fingerprint         string   `json:"fingerprint"`
+	RootCauseKey        string   `json:"root_cause_key"`
 	Classification      string   `json:"classification"`
 	WindowCount         int64    `json:"window_count"`
 	PriorDailyAverage   float64  `json:"prior_daily_average"`
@@ -183,6 +187,7 @@ type CodeEvidence struct {
 	ProductLine   string    `json:"product_line"`
 	Service       string    `json:"service"`
 	Fingerprint   string    `json:"fingerprint"`
+	RootCauseKey  string    `json:"root_cause_key,omitempty"`
 	Source        string    `json:"source"`
 	Status        string    `json:"status"`
 	Summary       string    `json:"summary"`
@@ -244,8 +249,23 @@ type ShadowEval struct {
 	KnownRealProblemRecall RecallMetric          `json:"known_real_problem_recall"`
 	KnownNoiseEscalated    int                   `json:"known_noise_escalated"`
 	FrequencyEscalations   []FrequencyEscalation `json:"frequency_escalations"`
+	ErrorIdentities        []ErrorIdentity       `json:"error_identities"`
 	CandidateMatches       map[string][]string   `json:"candidate_matches"`
 	Notes                  []string              `json:"notes"`
+}
+
+type ErrorIdentity struct {
+	ProblemID      int64    `json:"problem_id"`
+	RuleID         string   `json:"rule_id"`
+	Name           string   `json:"name"`
+	Reason         string   `json:"reason"`
+	Signature      string   `json:"signature"`
+	Service        string   `json:"service"`
+	Fingerprint    string   `json:"fingerprint"`
+	RootCauseKey   string   `json:"root_cause_key"`
+	Decision       string   `json:"decision"`
+	WindowCount    int64    `json:"window_count"`
+	RelatedRuleIDs []string `json:"related_rule_ids"`
 }
 
 type RecallMetric struct {

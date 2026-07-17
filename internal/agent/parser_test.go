@@ -7,12 +7,12 @@ import (
 )
 
 func TestParseProductionLogbackMultilineError(t *testing.T) {
-	cfg := Config{ProductLine: "gbjk-zhifu", Service: "gbjk-order", Environment: "prod", Timezone: "Asia/Shanghai"}
+	cfg := Config{ProductLine: "payments", Service: "checkout", Environment: "prod", Timezone: "Asia/Shanghai"}
 	record := "2026-07-13 14:30:12.345 trace_id: abc123 [http-nio-8080-exec-1] ERROR c.g.o.c.s.i.SettleClaimCasesServiceImpl - [addClaimCases,417] - 案件推送失败异常信息\n" +
 		"java.lang.IllegalStateException: downstream failed\n" +
-		"\tat com.gbjk.order.cases.service.impl.SettleClaimCasesServiceImpl.addClaimCases(SettleClaimCasesServiceImpl.java:417)"
+		"\tat com.example.order.cases.service.impl.SettleClaimCasesServiceImpl.addClaimCases(SettleClaimCasesServiceImpl.java:417)"
 
-	event, ok := parseRecord(record, "/var/log/gbjk-order/all.log", cfg)
+	event, ok := parseRecord(record, "/var/log/checkout/all.log", cfg)
 	if !ok {
 		t.Fatal("expected ERROR record")
 	}

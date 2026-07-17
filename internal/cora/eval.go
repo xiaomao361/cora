@@ -89,17 +89,13 @@ type evalSignatureState struct {
 	decisions map[string]bool
 }
 
-func EvaluateCoraCSV(ctx context.Context, reader io.Reader, productLine string) (ShadowEvalReport, error) {
+func EvaluateCoraCSV(ctx context.Context, reader io.Reader, productLine string, core Cora) (ShadowEvalReport, error) {
 	if productLine == "" {
 		return ShadowEvalReport{}, fmt.Errorf("product line is required")
 	}
 	data, err := io.ReadAll(reader)
 	if err != nil {
 		return ShadowEvalReport{}, fmt.Errorf("read evaluation CSV: %w", err)
-	}
-	core, err := defaultCoraCore()
-	if err != nil {
-		return ShadowEvalReport{}, err
 	}
 	ruleCore, ok := core.(*ruleCora)
 	if !ok {

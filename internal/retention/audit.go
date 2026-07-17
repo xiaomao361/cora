@@ -29,8 +29,8 @@ type databaseSnapshot struct {
 }
 
 type rawProblem struct {
-	id, count, cases, handled                                    int64
-	productLine, service, fingerprint, state, decision, lastSeen string
+	id, count, cases, handled                                                  int64
+	productLine, service, fingerprint, rootCauseKey, state, decision, lastSeen string
 }
 
 func RunAudit(ctx context.Context, config Config) (Result, error) {
@@ -276,14 +276,15 @@ func readTableStats(ctx context.Context, db *sql.DB, productLine string) ([]Tabl
 }
 
 func readProblems(ctx context.Context, db *sql.DB, productLine string) ([]rawProblem, error) {
-	rows, err := db.QueryContext(ctx, `SELECT p.id, p.product_line, p.service, p.fingerprint, p.state,
+	rows, err := db.QueryContext(ctx, `SELECT p.id, p.product_line, p.service, p.fingerprint, p.root_cause_key, p.state,
 		COALESCE(d.decision, 'none'), p.count, p.last_seen,
 		COUNT(c.id), COALESCE(SUM(CASE WHEN c.handled = 1 THEN 1 ELSE 0 END), 0)
 		FROM problems p
 		LEFT JOIN cora_decisions d ON d.product_line=p.product_line AND d.service=p.service AND d.fingerprint=p.fingerprint
+		 AND d.root_cause_key=p.root_cause_key
 		LEFT JOIN problem_cases c ON c.problem_id=p.id AND c.product_line=p.product_line
 		WHERE p.product_line=?
-		GROUP BY p.id, p.product_line, p.service, p.fingerprint, p.state, d.decision, p.count, p.last_seen
+		GROUP BY p.id, p.product_line, p.service, p.fingerprint, p.root_cause_key, p.state, d.decision, p.count, p.last_seen
 		ORDER BY p.service, p.fingerprint, p.id`, productLine)
 	if err != nil {
 		return nil, err
@@ -292,7 +293,7 @@ func readProblems(ctx context.Context, db *sql.DB, productLine string) ([]rawPro
 	var result []rawProblem
 	for rows.Next() {
 		var item rawProblem
-		if err := rows.Scan(&item.id, &item.productLine, &item.service, &item.fingerprint, &item.state, &item.decision, &item.count, &item.lastSeen, &item.cases, &item.handled); err != nil {
+		if err := rows.Scan(&item.id, &item.productLine, &item.service, &item.fingerprint, &item.rootCauseKey, &item.state, &item.decision, &item.count, &item.lastSeen, &item.cases, &item.handled); err != nil {
 			return nil, err
 		}
 		result = append(result, item)
@@ -301,7 +302,7 @@ func readProblems(ctx context.Context, db *sql.DB, productLine string) ([]rawPro
 }
 
 func decideProblem(ctx context.Context, db *sql.DB, problem rawProblem, receipts []loadedReceipt, artifacts artifactIndex, capturedAt time.Time) (ProblemDecision, []string, error) {
-	decision := ProblemDecision{ProblemID: problem.id, ProductLine: problem.productLine, Service: problem.service, Fingerprint: problem.fingerprint, State: problem.state, Decision: problem.decision, OccurrenceCount: problem.count, LastSeen: problem.lastSeen, CaseCount: problem.cases, HandledCaseCount: problem.handled}
+	decision := ProblemDecision{ProblemID: problem.id, ProductLine: problem.productLine, Service: problem.service, Fingerprint: problem.fingerprint, RootCauseKey: problem.rootCauseKey, State: problem.state, Decision: problem.decision, OccurrenceCount: problem.count, LastSeen: problem.lastSeen, CaseCount: problem.cases, HandledCaseCount: problem.handled}
 	baseReasons := []string{}
 	if problem.state != "resolved" {
 		baseReasons = append(baseReasons, "problem_active")
@@ -391,11 +392,11 @@ func estimateLogicalRelease(ctx context.Context, db *sql.DB, problem rawProblem)
 		return 0, 0, err
 	}
 	var trendRows, trendBytes int64
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(length(product_line)+length(service)+length(fingerprint)+length(window_start)+length(window_end)+16),0) FROM trend_points WHERE product_line=? AND service=? AND fingerprint=?`, problem.productLine, problem.service, problem.fingerprint).Scan(&trendRows, &trendBytes); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(length(product_line)+length(service)+length(fingerprint)+length(root_cause_key)+length(window_start)+length(window_end)+16),0) FROM trend_points WHERE product_line=? AND service=? AND fingerprint=? AND root_cause_key=?`, problem.productLine, problem.service, problem.fingerprint, problem.rootCauseKey).Scan(&trendRows, &trendBytes); err != nil {
 		return 0, 0, err
 	}
 	var nodeRows, nodeBytes int64
-	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(length(product_line)+length(service)+length(fingerprint)+length(node)+length(deployment_group)+length(window_start)+length(window_end)+16),0) FROM node_trend_points WHERE product_line=? AND service=? AND fingerprint=?`, problem.productLine, problem.service, problem.fingerprint).Scan(&nodeRows, &nodeBytes); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(length(product_line)+length(service)+length(fingerprint)+length(root_cause_key)+length(node)+length(deployment_group)+length(window_start)+length(window_end)+16),0) FROM node_trend_points WHERE product_line=? AND service=? AND fingerprint=? AND root_cause_key=?`, problem.productLine, problem.service, problem.fingerprint, problem.rootCauseKey).Scan(&nodeRows, &nodeBytes); err != nil {
 		return 0, 0, err
 	}
 	return trendRows + nodeRows, sampleBytes + trendBytes + nodeBytes, nil

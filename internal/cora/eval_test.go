@@ -9,16 +9,16 @@ import (
 
 func TestCoraShadowEvalProfilesLeakageAndLabelConflicts(t *testing.T) {
 	csv := `id,source_file,line_number,timestamp,trace_id,class_name,method,message,exception,rule_id,label,category
-1,statement.log,10,2026-04-01 10:00:00.000,,DruidDataSource,handleFatalError,CommunicationsException,,at_01,attention,database
-2,statement.log,11,2026-04-02 10:00:00.000,,DruidDataSource,handleFatalError,CommunicationsException retry,,at_01,attention,database
-3,gateway.log,20,28:51.7,,RouterServiceImpl,checkAccess,expired,,ig_03,ignore,token
-4,gateway.log,21,29:22.6,,RouterServiceImpl,checkAccess,expired again,,manual,attention,review
+1,ledger.log,10,2026-04-01 10:00:00.000,,DatabaseClient,query,database unavailable,,attention.database-unavailable,attention,database
+2,ledger.log,11,2026-04-02 10:00:00.000,,DatabaseClient,query,database unavailable retry,,attention.database-unavailable,attention,database
+3,checkout.log,20,28:51.7,,CheckoutHandler,handle,client cancelled,,ignore.client-cancelled,ignore,cancelled
+4,checkout.log,21,29:22.6,,CheckoutHandler,handle,client cancelled again,,manual,attention,review
 `
-	report, err := EvaluateCoraCSV(context.Background(), strings.NewReader(csv), "gbjk-zhifu")
+	report, err := EvaluateCoraCSV(context.Background(), strings.NewReader(csv), "payments", testRuleCore(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Model != "cora" || report.ModelVersion != "0.1.0" || report.ExperienceVersion != "cora-gbjk-v0.1.1" {
+	if report.Model != "cora" || report.ModelVersion != "0.1.0" || report.ExperienceVersion != "payments-example-v1" {
 		t.Fatalf("model identity=%s@%s experience=%s", report.Model, report.ModelVersion, report.ExperienceVersion)
 	}
 	if report.DataQuality.Rows != 4 || report.DataQuality.ParsedTimestamps != 2 || report.DataQuality.TimeSplitAvailable {
@@ -39,15 +39,15 @@ func TestCoraShadowEvalProfilesLeakageAndLabelConflicts(t *testing.T) {
 	if err := WriteShadowEvalMarkdown(&markdown, report); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(markdown.String(), "expired again") || !strings.Contains(markdown.String(), "Time-based validation is blocked") {
+	if strings.Contains(markdown.String(), "client cancelled again") || !strings.Contains(markdown.String(), "Time-based validation is blocked") {
 		t.Fatalf("unsafe or incomplete report:\n%s", markdown.String())
 	}
 }
 
 func TestCoraShadowEvalRecordsLenientCSVFallback(t *testing.T) {
 	csv := "id,source_file,line_number,timestamp,trace_id,class_name,method,message,exception,rule_id,label,category\n" +
-		"1,statement.log,10,28:51.7,,DruidDataSource,handleFatalError,bare \" quote,,at_01,attention,database\n"
-	report, err := EvaluateCoraCSV(context.Background(), strings.NewReader(csv), "gbjk-zhifu")
+		"1,ledger.log,10,28:51.7,,DatabaseClient,query,bare \" quote,,attention.database-unavailable,attention,database\n"
+	report, err := EvaluateCoraCSV(context.Background(), strings.NewReader(csv), "payments", testRuleCore(t))
 	if err != nil {
 		t.Fatal(err)
 	}

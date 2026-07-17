@@ -57,14 +57,14 @@ func TestSchemaMigrationCreatesAndReopensCurrentDatabase(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.Close()
-	assertSchemaVersion(t, path, 5)
+	assertSchemaVersion(t, path, 8)
 
 	store, err = OpenStore(path)
 	if err != nil {
 		t.Fatalf("reopen current database: %v", err)
 	}
 	store.Close()
-	assertSchemaVersion(t, path, 5)
+	assertSchemaVersion(t, path, 8)
 }
 
 func TestSchemaMigrationUpgradesUnversionedDatabaseWithoutLosingData(t *testing.T) {
@@ -95,7 +95,7 @@ func TestSchemaMigrationUpgradesUnversionedDatabaseWithoutLosingData(t *testing.
 	if err != nil || len(problems) != 1 || problems[0].Count != 7 {
 		t.Fatalf("legacy data not preserved: problems=%v err=%v", problems, err)
 	}
-	assertSchemaVersion(t, path, 5)
+	assertSchemaVersion(t, path, 8)
 }
 
 func TestSchemaMigrationUpgradesV3IdentityWithoutLosingFacts(t *testing.T) {
@@ -142,7 +142,7 @@ func TestSchemaMigrationUpgradesV3IdentityWithoutLosingFacts(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Service != "orders" {
 		t.Fatalf("migrated decisions=%v err=%v", items, err)
 	}
-	assertSchemaVersion(t, path, 5)
+	assertSchemaVersion(t, path, 8)
 }
 
 func TestSchemaMigrationRejectsNewerDatabase(t *testing.T) {
@@ -270,6 +270,61 @@ func TestSchemaMigrationFailureRollsBackVersionAndDDL(t *testing.T) {
 	}
 }
 
+func TestSchemaV7MigrationPreservesProblemAndCaseIdentity(t *testing.T) {
+	path := t.TempDir() + "/cora.db"
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := migrate(db, schemaMigrations[:6]); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	sample := `{"product_line":"line","service":"api","exception_type":"Timeout","message":"failed"}`
+	if _, err := db.Exec(`INSERT INTO problems
+		(id, product_line, fingerprint, service, environment, exception_type, logger, count,
+		 first_seen, last_seen, first_sample, latest_sample, state, state_changed_at)
+		VALUES (42, 'line', 'fp', 'api', 'prod', 'Timeout', 'Example', 3, ?, ?, ?, ?, 'resolved', ?)`,
+		now, now, sample, sample, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO cora_decisions
+		(product_line, service, fingerprint, decision, category, rule_id, reason, source,
+		 experience_version, decided_at, root_cause_key)
+		VALUES ('line', 'api', 'fp', 'ignore', 'known', 'ig_test', 'known noise',
+		 'experience_pack', 'test', ?, 'semantic.root')`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO problem_cases
+		(id, problem_id, product_line, service, fingerprint, actor, is_real_problem, handled,
+		 root_cause, action, prior_state, resulting_state, context_snapshot, recorded_at)
+		VALUES (7, 42, 'line', 'api', 'fp', 'tester', 0, 1, 'known noise', 'ignore',
+		 'new', 'resolved', '{}', ?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := OpenStore(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	detail, err := store.GetProblemCause(context.Background(), "line", "api", "fp", "semantic.root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if detail.Problem.ID != 42 || detail.Problem.RootCauseKey != "semantic.root" ||
+		len(detail.Cases) != 1 || detail.Cases[0].ID != 7 || detail.Cases[0].ProblemID != 42 {
+		t.Fatalf("migration changed durable identity: %+v", detail)
+	}
+	var traceRows int
+	if err := store.db.QueryRow(`SELECT count(*) FROM trace_problem_occurrences`).Scan(&traceRows); err != nil || traceRows != 0 {
+		t.Fatalf("v8 trace ledger should start empty: rows=%d err=%v", traceRows, err)
+	}
+}
+
 func assertSchemaVersion(t *testing.T, path string, want int) {
 	t.Helper()
 	db, err := sql.Open("sqlite", path)
@@ -348,13 +403,13 @@ func TestOutOfOrderErrorsKeepChronologicalBoundsAndSamples(t *testing.T) {
 		Stacktrace: "java.lang.IllegalStateException\n\tat com.example.Checkout.run(Checkout.java:41)",
 	}
 	newest := base
-	newest.Message = "newest"
+	newest.Message = "event 3"
 	newest.OccurredAt = time.Date(2026, 7, 13, 8, 0, 0, 0, time.UTC)
 	middle := base
-	middle.Message = "middle"
+	middle.Message = "event 2"
 	middle.OccurredAt = time.Date(2026, 7, 13, 7, 30, 0, 0, time.UTC)
 	oldest := base
-	oldest.Message = "oldest"
+	oldest.Message = "event 1"
 	oldest.OccurredAt = time.Date(2026, 7, 13, 15, 0, 0, 0, time.FixedZone("UTC+8", 8*60*60))
 
 	// Loki backfills can arrive newest-first. The first flush verifies ordering
@@ -398,8 +453,8 @@ func TestOutOfOrderErrorsKeepChronologicalBoundsAndSamples(t *testing.T) {
 	if err := json.Unmarshal([]byte(problem.LatestSample), &latestSample); err != nil {
 		t.Fatal(err)
 	}
-	if firstSample.Message != "oldest" || latestSample.Message != "newest" {
-		t.Fatalf("samples=%q..%q, want oldest..newest", firstSample.Message, latestSample.Message)
+	if firstSample.Message != "event 1" || latestSample.Message != "event 3" {
+		t.Fatalf("samples=%q..%q, want event 1..event 3", firstSample.Message, latestSample.Message)
 	}
 }
 
@@ -538,8 +593,8 @@ func TestProblemIdentitySeparatesServicesAndTracksDualNodes(t *testing.T) {
 	defer store.Close()
 	aggregator := NewAggregator(store, 10)
 	base := Event{
-		ProductLine: "gbjk-zhifu", Service: "gb-order", Environment: "prod",
-		Logger: "com.guanbai.Order", ExceptionType: "TimeoutException", Message: "same failure",
+		ProductLine: "payments", Service: "checkout", Environment: "prod",
+		Logger: "com.example.Order", ExceptionType: "TimeoutException", Message: "same failure",
 		OccurredAt: time.Date(2026, 7, 13, 1, 0, 0, 0, time.UTC),
 	}
 	node1 := base
@@ -548,7 +603,7 @@ func TestProblemIdentitySeparatesServicesAndTracksDualNodes(t *testing.T) {
 	node2.Labels = map[string]string{"node": "service02", "deployment_group": "service"}
 	node2.OccurredAt = node2.OccurredAt.Add(time.Minute)
 	otherService := base
-	otherService.Service = "gb-payment"
+	otherService.Service = "ledger"
 	otherService.Labels = map[string]string{"node": "service01", "deployment_group": "service"}
 
 	for _, event := range []Event{node1, node1, node2, otherService} {
@@ -560,7 +615,7 @@ func TestProblemIdentitySeparatesServicesAndTracksDualNodes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	problems, err := store.Problems(context.Background(), "gbjk-zhifu")
+	problems, err := store.Problems(context.Background(), "payments")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -569,18 +624,29 @@ func TestProblemIdentitySeparatesServicesAndTracksDualNodes(t *testing.T) {
 	}
 	var order Problem
 	for _, problem := range problems {
-		if problem.Service == "gb-order" {
+		if problem.Service == "checkout" {
 			order = problem
 		}
 	}
 	if order.Count != 3 {
-		t.Fatalf("gb-order problem=%+v, want count 3", order)
+		t.Fatalf("checkout problem=%+v, want count 3", order)
 	}
-	attention, err := store.Attention(context.Background(), "gbjk-zhifu")
+	attention, err := store.Attention(context.Background(), "payments")
 	if err != nil || len(attention) != 2 {
 		t.Fatalf("service-scoped decisions=%+v err=%v", attention, err)
 	}
-	nodes, err := store.NodeOccurrences(context.Background(), "gbjk-zhifu", "gb-order", order.Fingerprint)
+	incidents, err := store.CurrentAttention(context.Background(), "payments", 50)
+	if err != nil || len(incidents) != 1 || incidents[0].IncidentProblemCount != 2 ||
+		!strings.HasPrefix(incidents[0].IncidentKey, "root-cause:message:") {
+		t.Fatalf("cross-service root-cause grouping=%+v err=%v", incidents, err)
+	}
+	detail, err := store.GetProblem(context.Background(), "payments", "checkout", order.Fingerprint)
+	if err != nil || len(detail.RelatedProblems) != 1 ||
+		len(detail.RelatedProblems[0].RelationKinds) != 1 ||
+		detail.RelatedProblems[0].RelationKinds[0] != "same_root_cause" {
+		t.Fatalf("root-cause related problems=%+v err=%v", detail.RelatedProblems, err)
+	}
+	nodes, err := store.NodeOccurrences(context.Background(), "payments", "checkout", order.Fingerprint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -588,12 +654,12 @@ func TestProblemIdentitySeparatesServicesAndTracksDualNodes(t *testing.T) {
 		nodes[1].Node != "service02" || nodes[1].Count != 1 {
 		t.Fatalf("node occurrences=%+v", nodes)
 	}
-	points, err := store.NodeTrendPoints(context.Background(), "gbjk-zhifu", "gb-order", order.Fingerprint, "")
+	points, err := store.NodeTrendPoints(context.Background(), "payments", "checkout", order.Fingerprint, "")
 	if err != nil || len(points) != 2 {
 		t.Fatalf("node trends=%+v err=%v", points, err)
 	}
 
-	request := httptest.NewRequest(http.MethodGet, "/v1/node-occurrences?product_line=gbjk-zhifu&service=gb-order&fingerprint="+order.Fingerprint, nil)
+	request := httptest.NewRequest(http.MethodGet, "/v1/node-occurrences?product_line=payments&service=checkout&fingerprint="+order.Fingerprint, nil)
 	response := httptest.NewRecorder()
 	Handler(store).ServeHTTP(response, request)
 	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), `"node":"service02"`) {
@@ -676,8 +742,47 @@ func TestServerHealthExposesBuildSchemaAndWriteState(t *testing.T) {
 		t.Fatal(err)
 	}
 	if response.Code != http.StatusOK || body.Build.Version != "v-test" ||
-		body.Storage.SchemaVersion != 5 || body.Storage.SuccessfulWrites != 1 ||
+		body.Storage.SchemaVersion != 8 || body.Storage.SuccessfulWrites != 1 ||
 		body.Storage.LastSuccessfulWriteAt == nil {
 		t.Fatalf("status=%d health=%+v", response.Code, body)
+	}
+}
+
+func TestStoreSeparatesSameFingerprintByRootCause(t *testing.T) {
+	store, err := OpenStoreWithCora(t.TempDir()+"/cora.db", testRuleCore(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	base := Event{ProductLine: "payments", Service: "checkout", Environment: "prod",
+		Logger: "CheckoutHandler", Method: "handle", ExceptionType: "ApplicationError",
+		Message: "upstream timed out", Stacktrace: "at CheckoutHandler.handle(CheckoutHandler.java:118)"}
+	knownCancellation := base
+	knownCancellation.Message = "client cancelled request"
+	for _, event := range []Event{base, knownCancellation} {
+		if err := store.Record(context.Background(), event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	problems, err := store.Problems(context.Background(), "payments")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) != 2 || problems[0].Fingerprint != problems[1].Fingerprint ||
+		problems[0].RootCauseKey == problems[1].RootCauseKey {
+		t.Fatalf("same fingerprint was not split by root cause: %+v", problems)
+	}
+	for _, problem := range problems {
+		detail, err := store.GetProblemCause(context.Background(), problem.ProductLine,
+			problem.Service, problem.Fingerprint, problem.RootCauseKey)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if detail.Problem.ID != problem.ID || detail.Decision.RootCauseKey != problem.RootCauseKey ||
+			len(detail.TrendPoints) != 1 || detail.TrendPoints[0].RootCauseKey != problem.RootCauseKey {
+			t.Fatalf("root-scoped detail crossed problem boundary: %+v", detail)
+		}
 	}
 }

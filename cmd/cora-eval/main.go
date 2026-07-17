@@ -13,20 +13,25 @@ import (
 
 func main() {
 	input := flag.String("input", "", "Cora evaluation CSV path")
-	productLine := flag.String("product-line", "gbjk-zhifu", "experience-pack product line")
+	productLine := flag.String("product-line", "", "experience-pack product line")
+	experiencePackDir := flag.String("experience-pack-dir", "", "directory containing the private product-line experience pack")
 	jsonPath := flag.String("json", "", "JSON output path")
 	markdownPath := flag.String("markdown", "", "Markdown output path")
 	flag.Parse()
-	if *input == "" || (*jsonPath == "" && *markdownPath == "") {
-		fmt.Fprintln(os.Stderr, "input and at least one of json or markdown output are required")
+	if *input == "" || *productLine == "" || *experiencePackDir == "" || (*jsonPath == "" && *markdownPath == "") {
+		fmt.Fprintln(os.Stderr, "input, product-line, experience-pack-dir, and at least one of json or markdown output are required")
 		os.Exit(2)
+	}
+	core, err := cora.LoadExperiencePacks(*experiencePackDir)
+	if err != nil {
+		fatal(err)
 	}
 	file, err := os.Open(*input)
 	if err != nil {
 		fatal(err)
 	}
 	defer file.Close()
-	report, err := cora.EvaluateCoraCSV(context.Background(), file, *productLine)
+	report, err := cora.EvaluateCoraCSV(context.Background(), file, *productLine, core)
 	if err != nil {
 		fatal(err)
 	}

@@ -3,6 +3,7 @@ package cora
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -58,6 +59,8 @@ type RelatedProblem struct {
 	State          string    `json:"state"`
 	Decision       string    `json:"decision"`
 	Category       string    `json:"category"`
+	RootCauseKey   string    `json:"root_cause_key"`
+	RelationKinds  []string  `json:"relation_kinds"`
 	Count          int64     `json:"count"`
 	FirstSeen      time.Time `json:"first_seen"`
 	LastSeen       time.Time `json:"last_seen"`
@@ -68,6 +71,7 @@ type Outcome struct {
 	ProductLine   string `json:"product_line"`
 	Service       string `json:"service"`
 	Fingerprint   string `json:"fingerprint"`
+	RootCauseKey  string `json:"root_cause_key,omitempty"`
 	Actor         string `json:"actor"`
 	IsRealProblem bool   `json:"is_real_problem"`
 	Handled       bool   `json:"handled"`
@@ -99,11 +103,11 @@ func (s *Store) CurrentAttention(ctx context.Context, productLine string, limit 
 		       p.exception_type, p.logger, p.count, p.last_seen, p.state, p.state_changed_at,
 		       COALESCE(json_extract(p.first_sample, '$.trace_id'), ''),
 		       COALESCE(json_extract(p.latest_sample, '$.trace_id'), ''),
-		       d.decision, d.category, d.rule_id, d.reason, d.source,
+		       d.decision, d.root_cause_key, d.category, d.rule_id, d.reason, d.source,
 		       d.experience_version, d.decided_at
 		FROM problems p
 		JOIN cora_decisions d ON d.product_line = p.product_line AND d.service = p.service
-		 AND d.fingerprint = p.fingerprint
+		 AND d.fingerprint = p.fingerprint AND d.root_cause_key = p.root_cause_key
 		WHERE p.product_line = ? AND p.state IN ('new', 'acknowledged', 'recurring') AND d.decision != 'ignore'
 		ORDER BY CASE p.state WHEN 'recurring' THEN 0 WHEN 'new' THEN 1 ELSE 2 END,
 		         CASE d.decision WHEN 'attention' THEN 0 ELSE 1 END,
@@ -120,6 +124,7 @@ func (s *Store) CurrentAttention(ctx context.Context, productLine string, limit 
 			&candidate.item.Service, &candidate.item.Environment, &candidate.item.ExceptionType, &candidate.item.Logger,
 			&candidate.item.Count, &lastSeen, &candidate.item.State, &stateChangedAt,
 			&candidate.firstTraceID, &candidate.latestTraceID, &candidate.item.Decision,
+			&candidate.item.RootCauseKey,
 			&candidate.item.Category, &candidate.item.RuleID, &candidate.item.Reason, &candidate.item.Source,
 			&candidate.item.ExperienceVersion, &decidedAt); err != nil {
 			return nil, err
@@ -139,7 +144,147 @@ func (s *Store) CurrentAttention(ctx context.Context, productLine string, limit 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	return groupAttentionCandidates(candidates, limit), nil
+	items := groupAttentionCandidates(candidates, limit)
+	for index := range items {
+		if err := s.attachTraceProjection(ctx, &items[index]); err != nil {
+			return nil, err
+		}
+	}
+	return items, nil
+}
+
+type projectionAccumulator struct {
+	traceID           string
+	lastSeen          time.Time
+	wrapperProblemIDs map[int64]bool
+	causes            map[string]*projectionCause
+}
+
+type projectionCause struct {
+	decision  string
+	rootCause string
+	problems  map[int64]bool
+	services  map[string]bool
+	rules     map[string]bool
+}
+
+func (s *Store) attachTraceProjection(ctx context.Context, item *AttentionItem) error {
+	problemIDs := []int64{item.ProblemID}
+	for _, related := range item.RelatedProblems {
+		problemIDs = append(problemIDs, related.ProblemID)
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(problemIDs)), ",")
+	args := make([]any, 0, len(problemIDs)+1)
+	args = append(args, item.ProductLine)
+	for _, problemID := range problemIDs {
+		args = append(args, problemID)
+	}
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT w.trace_id, w.problem_id, w.last_seen,
+		       c.problem_id, c.service, c.root_cause_key, c.decision, c.rule_id
+		FROM trace_problem_occurrences w
+		LEFT JOIN trace_problem_occurrences c
+		  ON c.product_line = w.product_line AND c.trace_id = w.trace_id AND c.trace_role = 'cause'
+		WHERE w.product_line = ? AND w.problem_id IN (%s) AND w.trace_role = 'wrapper'
+		ORDER BY w.last_seen DESC, w.trace_id`, placeholders), args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	byTrace := map[string]*projectionAccumulator{}
+	for rows.Next() {
+		var traceID, lastSeen string
+		var wrapperProblemID int64
+		var causeProblemID sql.NullInt64
+		var causeService, causeRoot, causeDecision, causeRule sql.NullString
+		if err := rows.Scan(&traceID, &wrapperProblemID, &lastSeen, &causeProblemID,
+			&causeService, &causeRoot, &causeDecision, &causeRule); err != nil {
+			return err
+		}
+		accumulator := byTrace[traceID]
+		if accumulator == nil {
+			parsedLastSeen, _ := time.Parse(time.RFC3339Nano, lastSeen)
+			accumulator = &projectionAccumulator{traceID: traceID, lastSeen: parsedLastSeen,
+				wrapperProblemIDs: map[int64]bool{}, causes: map[string]*projectionCause{}}
+			byTrace[traceID] = accumulator
+		}
+		accumulator.wrapperProblemIDs[wrapperProblemID] = true
+		if causeProblemID.Valid {
+			identity := causeRoot.String + "\x00" + causeDecision.String
+			cause := accumulator.causes[identity]
+			if cause == nil {
+				cause = &projectionCause{decision: causeDecision.String, rootCause: causeRoot.String,
+					problems: map[int64]bool{}, services: map[string]bool{}, rules: map[string]bool{}}
+				accumulator.causes[identity] = cause
+			}
+			cause.problems[causeProblemID.Int64] = true
+			cause.services[causeService.String] = true
+			cause.rules[causeRule.String] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if len(byTrace) == 0 {
+		return nil
+	}
+	item.TraceProjectionMode = "shadow"
+	item.TraceProjection = &TraceProjectionSummary{}
+	accumulators := make([]*projectionAccumulator, 0, len(byTrace))
+	for _, accumulator := range byTrace {
+		accumulators = append(accumulators, accumulator)
+	}
+	sort.Slice(accumulators, func(left, right int) bool {
+		return accumulators[left].lastSeen.After(accumulators[right].lastSeen)
+	})
+	for _, accumulator := range accumulators {
+		projection := TraceProjection{TraceID: accumulator.traceID, LastSeen: accumulator.lastSeen,
+			WrapperProblemIDs: sortedInt64Keys(accumulator.wrapperProblemIDs)}
+		switch len(accumulator.causes) {
+		case 0:
+			projection.Status = "unresolved"
+			item.TraceProjection.Unresolved++
+		case 1:
+			projection.Status = "projected"
+			item.TraceProjection.Projected++
+			for _, cause := range accumulator.causes {
+				projection.ProjectedDecision = cause.decision
+				projection.ProjectedRootCause = cause.rootCause
+				projection.CauseProblemIDs = sortedInt64Keys(cause.problems)
+				projection.CauseServices = sortedStringKeys(cause.services)
+				projection.CauseRuleIDs = sortedStringKeys(cause.rules)
+			}
+		default:
+			projection.Status = "ambiguous"
+			item.TraceProjection.Ambiguous++
+			for _, cause := range accumulator.causes {
+				projection.CandidateRootCauses = append(projection.CandidateRootCauses, cause.rootCause)
+			}
+			sort.Strings(projection.CandidateRootCauses)
+		}
+		if len(item.TraceProjection.Projections) < 20 {
+			item.TraceProjection.Projections = append(item.TraceProjection.Projections, projection)
+		}
+	}
+	return nil
+}
+
+func sortedInt64Keys(values map[int64]bool) []int64 {
+	result := make([]int64, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Slice(result, func(left, right int) bool { return result[left] < result[right] })
+	return result
+}
+
+func sortedStringKeys(values map[string]bool) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 type attentionCandidate struct {
@@ -167,7 +312,15 @@ func groupAttentionCandidates(candidates []attentionCandidate, limit int) []Atte
 		}
 	}
 	traceOwner := map[string]int{}
+	rootCauseOwner := map[string]int{}
 	for index, candidate := range candidates {
+		if candidate.item.RootCauseKey != "" {
+			if owner, exists := rootCauseOwner[candidate.item.RootCauseKey]; exists {
+				union(index, owner)
+			} else {
+				rootCauseOwner[candidate.item.RootCauseKey] = index
+			}
+		}
 		for traceID := range candidate.traceIDs {
 			if owner, exists := traceOwner[traceID]; exists {
 				union(index, owner)
@@ -195,12 +348,16 @@ func groupAttentionCandidates(candidates []attentionCandidate, limit int) []Atte
 		representative.RelatedCount = len(members) - 1
 		representative.RelatedProblems = []AttentionRelatedProblem{}
 		traceFrequency := map[string]int{}
+		rootCauseFrequency := map[string]int{}
 		services := map[string]bool{}
 		identities := make([]string, 0, len(members))
 		for _, member := range members {
 			candidate := candidates[member]
 			services[candidate.item.Service] = true
 			identities = append(identities, candidate.item.Service+":"+candidate.item.Fingerprint)
+			if candidate.item.RootCauseKey != "" {
+				rootCauseFrequency[candidate.item.RootCauseKey]++
+			}
 			for traceID := range candidate.traceIDs {
 				traceFrequency[traceID]++
 			}
@@ -215,25 +372,44 @@ func groupAttentionCandidates(candidates []attentionCandidate, limit int) []Atte
 			}
 		}
 		sort.Strings(representative.SharedTraceIDs)
-		sort.Strings(identities)
-		digest := sha256.Sum256([]byte(strings.Join(identities, "\n")))
-		representative.IncidentKey = "incident-" + hex.EncodeToString(digest[:8])
+		sharedRootCauseKeys := []string{}
+		for key, frequency := range rootCauseFrequency {
+			if frequency > 1 {
+				sharedRootCauseKeys = append(sharedRootCauseKeys, key)
+			}
+		}
+		sort.Strings(sharedRootCauseKeys)
+		if len(sharedRootCauseKeys) > 0 {
+			representative.IncidentKey = "root-cause:" + sharedRootCauseKeys[0]
+		} else {
+			sort.Strings(identities)
+			digest := sha256.Sum256([]byte(strings.Join(identities, "\n")))
+			representative.IncidentKey = "incident-" + hex.EncodeToString(digest[:8])
+		}
 		for _, member := range members {
 			if member == index {
 				continue
 			}
 			candidate := candidates[member]
 			shared := []string{}
+			relationKinds := []string{}
+			if candidate.item.RootCauseKey != "" && candidate.item.RootCauseKey == representative.RootCauseKey {
+				relationKinds = append(relationKinds, "same_root_cause")
+			}
 			for traceID := range candidate.traceIDs {
 				if traceFrequency[traceID] > 1 {
 					shared = append(shared, traceID)
 				}
 			}
 			sort.Strings(shared)
+			if len(shared) > 0 {
+				relationKinds = append(relationKinds, "shared_trace")
+			}
 			representative.RelatedProblems = append(representative.RelatedProblems, AttentionRelatedProblem{
 				ProblemID: candidate.item.ProblemID, Service: candidate.item.Service,
 				Fingerprint: candidate.item.Fingerprint, State: candidate.item.State,
 				Decision: candidate.item.Decision, Category: candidate.item.Category,
+				RootCauseKey: candidate.item.RootCauseKey, RelationKinds: relationKinds,
 				Count: candidate.item.Count, LastSeen: candidate.item.LastSeen,
 				SharedTraceIDs: shared,
 			})
@@ -247,27 +423,34 @@ func groupAttentionCandidates(candidates []attentionCandidate, limit int) []Atte
 }
 
 func (s *Store) GetProblem(ctx context.Context, productLine, service, fingerprint string) (ProblemDetail, error) {
+	return s.GetProblemCause(ctx, productLine, service, fingerprint, "")
+}
+
+func (s *Store) GetProblemCause(ctx context.Context, productLine, service, fingerprint, rootCauseKey string) (ProblemDetail, error) {
 	var detail ProblemDetail
 	if strings.TrimSpace(productLine) == "" || strings.TrimSpace(service) == "" || strings.TrimSpace(fingerprint) == "" {
 		return detail, errors.New("product_line, service, and fingerprint are required")
 	}
 	var firstSeen, lastSeen, stateChangedAt, decidedAt string
 	err := s.db.QueryRowContext(ctx, `
-		SELECT p.id, p.product_line, p.fingerprint, p.service, p.environment,
+		SELECT p.id, p.product_line, p.fingerprint, p.root_cause_key, p.service, p.environment,
 		       p.exception_type, p.logger, p.count, p.first_seen, p.last_seen,
 		       p.first_sample, p.latest_sample, p.state, p.state_changed_at,
-		       d.decision, d.category, d.rule_id, d.reason, d.source,
+		       d.decision, d.root_cause_key, d.category, d.rule_id, d.reason, d.source,
 		       d.experience_version, d.decided_at
 		FROM problems p
 		JOIN cora_decisions d ON d.product_line = p.product_line AND d.service = p.service
-		 AND d.fingerprint = p.fingerprint
-		WHERE p.product_line = ? AND p.service = ? AND p.fingerprint = ?`,
-		productLine, service, fingerprint).Scan(
+		 AND d.fingerprint = p.fingerprint AND d.root_cause_key = p.root_cause_key
+		WHERE p.product_line = ? AND p.service = ? AND p.fingerprint = ?
+		  AND (? = '' OR p.root_cause_key = ?)
+		ORDER BY p.last_seen DESC, p.id DESC LIMIT 1`,
+		productLine, service, fingerprint, rootCauseKey, rootCauseKey).Scan(
 		&detail.Problem.ID, &detail.Problem.ProductLine, &detail.Problem.Fingerprint,
-		&detail.Problem.Service, &detail.Problem.Environment, &detail.Problem.ExceptionType,
+		&detail.Problem.RootCauseKey, &detail.Problem.Service, &detail.Problem.Environment, &detail.Problem.ExceptionType,
 		&detail.Problem.Logger, &detail.Problem.Count, &firstSeen, &lastSeen,
 		&detail.Problem.FirstSample, &detail.Problem.LatestSample, &detail.Problem.State,
-		&stateChangedAt, &detail.Decision.Decision, &detail.Decision.Category,
+		&stateChangedAt, &detail.Decision.Decision, &detail.Decision.RootCauseKey,
+		&detail.Decision.Category,
 		&detail.Decision.RuleID, &detail.Decision.Reason, &detail.Decision.Source,
 		&detail.Decision.ExperienceVersion, &decidedAt)
 	if err != nil {
@@ -277,46 +460,51 @@ func (s *Store) GetProblem(ctx context.Context, productLine, service, fingerprin
 	detail.Problem.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeen)
 	detail.Problem.StateChangedAt, _ = time.Parse(time.RFC3339Nano, stateChangedAt)
 	detail.Decision.DecidedAt, _ = time.Parse(time.RFC3339Nano, decidedAt)
-	if detail.TrendPoints, err = s.TrendPoints(ctx, productLine, service, fingerprint); err != nil {
+	if detail.TrendPoints, err = s.trendPointsForCause(ctx, productLine, service, fingerprint, detail.Problem.RootCauseKey); err != nil {
 		return ProblemDetail{}, err
 	}
-	if detail.NodeOccurrences, err = s.NodeOccurrences(ctx, productLine, service, fingerprint); err != nil {
+	if detail.NodeOccurrences, err = s.nodeOccurrencesForCause(ctx, productLine, service, fingerprint, detail.Problem.RootCauseKey); err != nil {
 		return ProblemDetail{}, err
 	}
-	if detail.NodeTrendPoints, err = s.NodeTrendPoints(ctx, productLine, service, fingerprint, ""); err != nil {
+	if detail.NodeTrendPoints, err = s.nodeTrendPointsForCause(ctx, productLine, service, fingerprint, detail.Problem.RootCauseKey, ""); err != nil {
 		return ProblemDetail{}, err
 	}
-	if detail.RelatedProblems, err = s.relatedProblems(ctx, detail.Problem); err != nil {
+	if detail.RelatedProblems, err = s.relatedProblems(ctx, detail.Problem, detail.Decision.RootCauseKey); err != nil {
 		return ProblemDetail{}, err
 	}
-	if detail.Cases, err = s.ProblemCases(ctx, productLine, service, fingerprint); err != nil {
+	if detail.Cases, err = s.problemCasesByID(ctx, detail.Problem.ID); err != nil {
 		return ProblemDetail{}, err
 	}
 	return detail, nil
 }
 
-func (s *Store) relatedProblems(ctx context.Context, problem Problem) ([]RelatedProblem, error) {
+func (s *Store) relatedProblems(ctx context.Context, problem Problem, rootCauseKey string) ([]RelatedProblem, error) {
 	targetTraceIDs := problemTraceIDs(problem)
-	if len(targetTraceIDs) == 0 {
+	if len(targetTraceIDs) == 0 && rootCauseKey == "" {
 		return []RelatedProblem{}, nil
 	}
-	traceA := targetTraceIDs[0]
-	traceB := traceA
+	traceA, traceB := "", ""
+	if len(targetTraceIDs) > 0 {
+		traceA = targetTraceIDs[0]
+		traceB = traceA
+	}
 	if len(targetTraceIDs) > 1 {
 		traceB = targetTraceIDs[1]
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.service, p.fingerprint, p.state, p.count, p.first_seen,
-		       p.last_seen, p.first_sample, p.latest_sample, d.decision, d.category
+		       p.last_seen, p.first_sample, p.latest_sample, d.decision, d.category,
+		       d.root_cause_key
 		FROM problems p
 		JOIN cora_decisions d ON d.product_line = p.product_line AND d.service = p.service
-		 AND d.fingerprint = p.fingerprint
+		 AND d.fingerprint = p.fingerprint AND d.root_cause_key = p.root_cause_key
 		WHERE p.product_line = ?
-		  AND NOT (p.service = ? AND p.fingerprint = ?)
-		  AND (json_extract(p.first_sample, '$.trace_id') IN (?, ?)
+		  AND p.id != ?
+		  AND ((? != '' AND d.root_cause_key = ?)
+		       OR json_extract(p.first_sample, '$.trace_id') IN (?, ?)
 		       OR json_extract(p.latest_sample, '$.trace_id') IN (?, ?))
-		ORDER BY p.last_seen DESC, p.id DESC`, problem.ProductLine, problem.Service,
-		problem.Fingerprint, traceA, traceB, traceA, traceB)
+		ORDER BY p.last_seen DESC, p.id DESC`, problem.ProductLine, problem.ID,
+		rootCauseKey, rootCauseKey, traceA, traceB, traceA, traceB)
 	if err != nil {
 		return nil, err
 	}
@@ -327,16 +515,22 @@ func (s *Store) relatedProblems(ctx context.Context, problem Problem) ([]Related
 		var firstSeen, lastSeen, firstSample, latestSample string
 		if err := rows.Scan(&item.ProblemID, &item.Service, &item.Fingerprint,
 			&item.State, &item.Count, &firstSeen, &lastSeen, &firstSample,
-			&latestSample, &item.Decision, &item.Category); err != nil {
+			&latestSample, &item.Decision, &item.Category, &item.RootCauseKey); err != nil {
 			return nil, err
 		}
 		item.FirstSeen, _ = time.Parse(time.RFC3339Nano, firstSeen)
 		item.LastSeen, _ = time.Parse(time.RFC3339Nano, lastSeen)
 		candidateTraceIDs := sampleTraceIDs(firstSample, latestSample)
+		if rootCauseKey != "" && item.RootCauseKey == rootCauseKey {
+			item.RelationKinds = append(item.RelationKinds, "same_root_cause")
+		}
 		for _, traceID := range targetTraceIDs {
 			if candidateTraceIDs[traceID] {
 				item.SharedTraceIDs = append(item.SharedTraceIDs, traceID)
 			}
+		}
+		if len(item.SharedTraceIDs) > 0 {
+			item.RelationKinds = append(item.RelationKinds, "shared_trace")
 		}
 		related = append(related, item)
 	}
@@ -373,12 +567,20 @@ func sampleTraceIDs(samples ...string) map[string]bool {
 }
 
 func (s *Store) ProblemCases(ctx context.Context, productLine, service, fingerprint string) ([]ProblemCase, error) {
+	return s.problemCases(ctx, `product_line = ? AND service = ? AND fingerprint = ?`, productLine, service, fingerprint)
+}
+
+func (s *Store) problemCasesByID(ctx context.Context, problemID int64) ([]ProblemCase, error) {
+	return s.problemCases(ctx, `problem_id = ?`, problemID)
+}
+
+func (s *Store) problemCases(ctx context.Context, where string, args ...any) ([]ProblemCase, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, problem_id, product_line, service,
 		fingerprint, actor, is_real_problem, handled, root_cause, action, prior_state,
 		resulting_state, context_snapshot, recorded_at
 		FROM problem_cases
-		WHERE product_line = ? AND service = ? AND fingerprint = ?
-		ORDER BY recorded_at DESC, id DESC`, productLine, service, fingerprint)
+		WHERE `+where+`
+		ORDER BY recorded_at DESC, id DESC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -487,6 +689,7 @@ func (s *Store) RecordOutcome(ctx context.Context, outcome Outcome) (result Prob
 	outcome.ProductLine = strings.TrimSpace(outcome.ProductLine)
 	outcome.Service = strings.TrimSpace(outcome.Service)
 	outcome.Fingerprint = strings.TrimSpace(outcome.Fingerprint)
+	outcome.RootCauseKey = strings.TrimSpace(outcome.RootCauseKey)
 	outcome.Actor = strings.TrimSpace(outcome.Actor)
 	outcome.RootCause = strings.TrimSpace(outcome.RootCause)
 	outcome.Action = strings.TrimSpace(outcome.Action)
@@ -509,18 +712,22 @@ func (s *Store) RecordOutcome(ctx context.Context, outcome Outcome) (result Prob
 	var problem Problem
 	var decision CoraDecision
 	var firstSeen, lastSeen, stateChangedAt, decidedAt string
-	err = tx.QueryRowContext(ctx, `SELECT p.id, p.product_line, p.fingerprint, p.service,
+	err = tx.QueryRowContext(ctx, `SELECT p.id, p.product_line, p.fingerprint, p.root_cause_key, p.service,
 		p.environment, p.exception_type, p.logger, p.count, p.first_seen, p.last_seen,
 		p.first_sample, p.latest_sample, p.state, p.state_changed_at,
-		d.decision, d.category, d.rule_id, d.reason, d.source, d.experience_version, d.decided_at
+		d.decision, d.root_cause_key, d.category, d.rule_id, d.reason, d.source,
+		d.experience_version, d.decided_at
 		FROM problems p JOIN cora_decisions d
 		ON d.product_line = p.product_line AND d.service = p.service AND d.fingerprint = p.fingerprint
-		WHERE p.product_line = ? AND p.service = ? AND p.fingerprint = ?`, outcome.ProductLine,
-		outcome.Service, outcome.Fingerprint).Scan(&problem.ID, &problem.ProductLine,
-		&problem.Fingerprint, &problem.Service, &problem.Environment, &problem.ExceptionType,
+		 AND d.root_cause_key = p.root_cause_key
+		WHERE p.product_line = ? AND p.service = ? AND p.fingerprint = ?
+		 AND (? = '' OR p.root_cause_key = ?)
+		ORDER BY p.last_seen DESC, p.id DESC LIMIT 1`, outcome.ProductLine,
+		outcome.Service, outcome.Fingerprint, outcome.RootCauseKey, outcome.RootCauseKey).Scan(&problem.ID, &problem.ProductLine,
+		&problem.Fingerprint, &problem.RootCauseKey, &problem.Service, &problem.Environment, &problem.ExceptionType,
 		&problem.Logger, &problem.Count, &firstSeen, &lastSeen, &problem.FirstSample,
 		&problem.LatestSample, &problem.State, &stateChangedAt, &decision.Decision,
-		&decision.Category, &decision.RuleID, &decision.Reason, &decision.Source,
+		&decision.RootCauseKey, &decision.Category, &decision.RuleID, &decision.Reason, &decision.Source,
 		&decision.ExperienceVersion, &decidedAt)
 	if err != nil {
 		return result, err

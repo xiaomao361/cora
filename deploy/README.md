@@ -1,221 +1,51 @@
-# Cora Supervisor deployment
+# Deployment
 
-This is the reusable controlled-canary template for one Cora Server and one Cora Agent.
-Replace the example private IP, node identity, service, and log path before use. Do not expose
-the Server process directly; any external access must terminate at the controlled reverse proxy.
+This directory provides a generic Supervisor layout. Site-specific hosts, users,
+paths, tokens, Packs, and topology belong in private deployment configuration.
 
-## Current production topology (2026-07-15)
+## Build
 
-The current GBJK deployment intentionally differs from the generic `/home/cora` template below:
+Build only from a clean commit:
+
+```sh
+deploy/scripts/build-release.sh v0.1.0-rc1
+```
+
+The output contains statically linked Linux amd64 `cora-server`, `cora-agent`,
+and `cora-canary` binaries plus `SHA256SUMS`.
+
+## Suggested layout
 
 ```text
-Codex / authorized client
-  -> https://cora.gbgoodness.com
-  -> Nginx on public-web (172.22.244.253)
-  -> Cora Server (172.22.245.1:8088)
-
-business host Cora Agent
-  -> http://public.internal:8088/v1/events:batch
-  -> Cora Server (172.22.245.1:8088)
+/opt/cora/bin/                 binaries
+/etc/cora/server.yml           Server configuration
+/etc/cora/auth.token           Server bearer token, mode 0600
+/etc/cora/experience-packs/    private reviewed Packs
+/var/lib/cora/cora.db          SQLite data
+/etc/cora-agent/agent.yml      Agent configuration
+/etc/cora-agent/auth.token     Agent token, mode 0600
+/var/lib/cora-agent/           positions
 ```
 
-- Server runtime: user `gbjk`, directory `/home/gbjk/zhouwei/cora`, command
-  `/home/gbjk/zhouwei/cora/cora-server -config.file=./cora.yml`.
-- Agent runtime: user `gbjk`, directory `/home/gbjk/cora`, command
-  `/home/gbjk/cora/cora-agent -config.file=/home/gbjk/cora/agent.yml`.
-- Server data/token: `./cora.db` and `./auth.token` relative to the Server runtime directory.
-- Each Agent owns `./positions.json`; its local health listener is bound to the business host IP
-  on port `9088`.
+Adapt the Supervisor examples under `deploy/supervisor/` to these paths and a
+dedicated unprivileged user.
 
-The sections below remain examples for a new installation, not a statement of the current
-production paths or ports.
+## Preflight
 
-## Flat runtime layout
+1. Copy and edit the Server and Agent examples under `config/`.
+2. Create token files and persistent directories with least privilege.
+3. Put private Packs outside the repository, or omit the Pack directory for
+   observe-only operation.
+4. Run both binaries with `-check-config`.
+5. Back up the existing database and positions before replacement.
+6. Verify binary `-version` output and checksums.
 
-```text
-/home/cora/cora-server
-/home/cora/cora-agent
-/home/cora/auth.token
-/home/cora/cora.yml
-/home/cora/agent.yml
-/home/cora/cora.db
-/home/cora/positions.json
-/home/cora/cora-server.log
-/home/cora/cora-agent.log
-```
+## Acceptance
 
-Run Server and Agent as a dedicated `cora` user. The Agent also needs read
-permission for each configured application log. Keep `/home/cora/auth.token`
-owned by that user with mode `0600`; distribute the same file to the Server and
-authorized Agent hosts over the existing secure administration channel.
+After restart, verify `/healthz`, `/readyz`, one authenticated event batch, and
+MCP initialization/tool listing. Run `cora-canary` with an explicit fictional or
+private product line. Keep the previous binary, config, database backup, and
+positions backup until the observation window closes.
 
-Generate a token without printing it:
-
-```sh
-umask 077
-install -d -o cora -g cora -m 0750 /home/cora
-openssl rand -hex 32 > /home/cora/auth.token
-chown cora:cora /home/cora/auth.token
-chmod 0600 /home/cora/auth.token
-```
-
-## Build identified Linux amd64 binaries
-
-Build only from a clean, identified release commit. The release script injects
-version, commit, and UTC build time into all three binaries and writes checksums:
-
-```sh
-go test ./...
-go test -race ./...
-go vet ./...
-deploy/scripts/build-release.sh v0.1.0-rc3
-cat dist/v0.1.0-rc3/SHA256SUMS
-```
-
-Copy only the binary needed by each host directly into `/home/cora`: Server
-hosts need `cora-server`; application hosts need `cora-agent`. `cora-canary` is
-an optional acceptance tool, not a runtime dependency. Before replacement, keep
-a `.previous` copy of the currently running binary for simple rollback.
-
-## Server boundary
-
-Copy `config/cora-server.example.yml` to `/home/cora/cora.yml`, then replace
-`10.0.0.10` with the Server's private address. The production command has one
-configuration argument:
-
-```sh
-cd /home/cora
-./cora-server -config.file=./cora.yml -check-config
-./cora-server -config.file=./cora.yml
-```
-
-Relative paths in `cora.yml` resolve from the process working directory. The
-Supervisor program therefore fixes `directory=/home/cora`, so `./cora.db` and
-`./auth.token` remain beside the binary and configuration. The process refuses
-to start without `auth.bearer_token_file` unless
-`auth.allow_unauthenticated: true` is explicitly used for local development.
-
-Restrict the Server security group/firewall to only the selected Agent private
-addresses. `/healthz` is intentionally unauthenticated; every other current or
-future endpoint, including `/v1/*` and `/mcp`, requires the token.
-
-The Agent-facing MCP endpoint is `http://<private-server-address>:8080/mcp` and
-uses Streamable HTTP. Configure the consuming Agent with that URL and the same
-`Authorization: Bearer <token>` header; keep the token in the Agent's secret or
-credential facility rather than checking it into an MCP configuration file.
-
-## Agent boundary
-
-Copy `config/cora-agent-canary.example.yml` to `/home/cora/agent.yml` and replace:
-
-- Server private address;
-- `product_line`, `app`, `node`, and `deployment_group`;
-- the explicit active Logback file path.
-
-Keep `agent.start_at: end` for the first canary so deployment does not replay
-historical logs. Validate before Supervisor starts it:
-
-```sh
-cd /home/cora
-./cora-agent -config.file=./agent.yml -check-config
-```
-
-## Install and operate with Supervisor
-
-Keep `cora-server.conf` or `cora-agent.conf` directly in `/home/cora`, and link
-the relevant file into the host's Supervisor include directory. Then run:
-
-```sh
-ln -s /home/cora/cora-server.conf /etc/supervisor/conf.d/cora-server.conf
-supervisorctl reread
-supervisorctl update
-supervisorctl status cora-server
-supervisorctl status cora-agent
-```
-
-Server and Agent handle `SIGTERM`. Agent delivery failures exhaust bounded
-retries and exit non-zero, so `autorestart=unexpected` restarts it from the last
-acknowledged position.
-
-Before starting a new Server binary against an existing database, create a
-verified consistent backup with the currently deployed binary:
-
-```sh
-deploy/scripts/backup-server.sh \
-  /home/cora/cora-server \
-  /home/cora/cora.db \
-  /home/cora
-```
-
-Before replacing an Agent, stop it briefly and back up its acknowledged offsets:
-
-```sh
-supervisorctl stop cora-agent
-deploy/scripts/backup-positions.sh \
-  /home/cora/positions.json \
-  /home/cora
-supervisorctl start cora-agent
-```
-
-Canary liveness and readiness:
-
-```sh
-curl --fail http://127.0.0.1:9088/readyz
-curl --fail http://10.0.0.10:8080/healthz
-
-/home/cora/cora-canary \
-  -server-url=http://10.0.0.10:8080 \
-  -auth-token-file=/home/cora/auth.token \
-  -product-line=gbjk-zhifu
-```
-
-Also verify that an unauthenticated `/v1/problems` request returns `401`, the
-Agent advances its positions file, Cora creates the expected service Problem,
-and Server health reports zero dropped events, no unrecovered SQLite write
-failure, the expected schema/build identity, and current write timestamps. Before
-expanding the canary, use a real MCP client to call `cora_list_attention`,
-`cora_get_problem`, `cora_record_outcome`, and `cora_export_cases`. Confirm the
-resolved Problem disappears from the current list, a later matching error
-returns as recurring, and two export pages retain the same `snapshot_id` and
-`snapshot_through_case_id` while new outcomes are deferred to the next snapshot.
-
-## Restore drill and rollback
-
-The backup command uses SQLite `VACUUM INTO` and immediately runs
-`PRAGMA quick_check` against the result. Exercise a restore before the canary:
-
-```sh
-supervisorctl stop cora-server
-mv /home/cora/cora.db /home/cora/cora.db.pre-restore
-cp /home/cora/cora-<timestamp>.db /home/cora/cora.db
-chown cora:cora /home/cora/cora.db
-chmod 0600 /home/cora/cora.db
-cd /home/cora
-./cora-server -config.file=./cora.yml -check-db
-supervisorctl start cora-server
-/home/cora/cora-canary \
-  -server-url=http://10.0.0.10:8080 \
-  -auth-token-file=/home/cora/auth.token \
-  -product-line=gbjk-zhifu
-```
-
-Rollback by stopping the program, restoring its `.previous` binary and the
-matching flat database backup if the schema changed, then starting it again.
-Preserve the failed binary, logs, database, and positions until the incident is
-understood.
-
-## 72-hour production test gate
-
-Start with one Agent and one or two explicit files. Keep `start_at: end`. During
-the 72-hour canary, check at least daily:
-
-- Agent readiness is 200; all workers are running/readable and delivery is not failing.
-- Per-target lag returns toward zero; retry, parse, truncation, and drop counters are reviewed.
-- Server readiness is 200; the latest SQLite write is successful and schema/build identity is expected.
-- Supervisor has no restart loop and disk usage for logs, SQLite, WAL, and positions remains bounded.
-- `cora-canary` passes and an actual Agent completes one list/get/record outcome loop.
-- At least one worthwhile problem is either fixed or deliberately classified; complete coverage is not required.
-
-Stop expansion if delivery remains failing, lag grows continuously, SQLite's
-latest write is failed, sensitive data appears in a sample, product-line facts
-mix, or backup restore cannot be reproduced.
+Do not publish a deployment bundle that contains private Packs or production
+configuration as a GitHub release asset.

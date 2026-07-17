@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/claracore/cora/internal/cora"
@@ -33,6 +34,9 @@ func newBreadcrumbBuffer(maxBytes int) *breadcrumbBuffer {
 }
 
 func (buffer *breadcrumbBuffer) add(record parsedRecord) {
+	if !retainBreadcrumb(record) {
+		return
+	}
 	entry := breadcrumbEntry{traceID: record.traceID, breadcrumb: cora.Breadcrumb{
 		OccurredAt: record.occurredAt, Level: record.level, Logger: record.logger,
 		Thread: record.thread, Method: record.method, Line: record.line, Message: record.message,
@@ -48,6 +52,14 @@ func (buffer *breadcrumbBuffer) add(record parsedRecord) {
 	if buffer.encodedSize() > buffer.maxBytes {
 		buffer.entries = buffer.entries[:0]
 	}
+}
+
+func retainBreadcrumb(record parsedRecord) bool {
+	if strings.HasSuffix(record.logger, "RequestResponseLoggingFilter") &&
+		(record.method == "logRequest" || record.method == "logResponse") {
+		return false
+	}
+	return true
 }
 
 func (buffer *breadcrumbBuffer) selectFor(record parsedRecord) []cora.Breadcrumb {

@@ -45,6 +45,7 @@ func TestMCPProblemDetailRelatesSharedTracesAndBoundsBreadcrumbs(t *testing.T) {
 	unrelated.Service = "pricing"
 	unrelated.TraceID = "trace-other"
 	unrelated.Logger = "com.example.Pricing"
+	unrelated.Message = "pricing failed"
 	unrelated.Stacktrace = "at com.example.Pricing.lookup(Pricing.java:61)"
 	for _, event := range []Event{primary, related, unrelated} {
 		if err := store.Record(ctx, event); err != nil {

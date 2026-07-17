@@ -7,135 +7,167 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 	"time"
 )
 
-func TestCoraExperiencePackGoldenCases(t *testing.T) {
+func TestCheckedInExamplePackLoads(t *testing.T) {
+	core, err := LoadExperiencePacks("../../config/experience-packs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pack := core.(*ruleCora).packs["payments"]
+	if pack.Version != "payments-example-v1" || len(pack.Rules) != 2 {
+		t.Fatalf("pack=%+v", pack)
+	}
+}
+
+const testExperiencePack = `{
+  "schema_version": "cora.experience-pack.v1",
+  "product_line": "payments",
+  "version": "payments-example-v1",
+  "default_decision": "observe",
+  "priority_order": ["attention", "observe", "ignore"],
+  "rules": [
+    {
+      "id": "attention.database-unavailable",
+      "decision": "attention",
+      "category": "database",
+      "reason": "database connectivity failures require review",
+      "trace_role": "cause",
+      "match": {"class": "DatabaseClient"}
+    },
+    {
+      "id": "ignore.client-cancelled",
+      "decision": "ignore",
+      "root_cause_key": "payments.client-cancelled",
+      "category": "client-cancelled",
+      "reason": "the caller cancelled before processing completed",
+      "trace_role": "cause",
+      "match": {"class": "CheckoutHandler", "message_contains": ["client cancelled"]}
+    },
+    {
+      "id": "attention.retry-wrapper",
+      "decision": "attention",
+      "category": "retry-wrapper",
+      "reason": "retry exhaustion is a wrapper until a cause is identified",
+      "trace_role": "wrapper",
+      "match": {"class": "RetryExecutor", "message_contains": ["retry exhausted"]}
+    }
+  ]
+}`
+
+func testRuleCore(t *testing.T) Cora {
+	t.Helper()
+	core, err := loadRuleCora(fstest.MapFS{
+		"payments.json": &fstest.MapFile{Data: []byte(testExperiencePack)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return core
+}
+
+func TestDefaultCoreContainsNoProductSpecificRules(t *testing.T) {
 	core, err := defaultCoraCore()
 	if err != nil {
 		t.Fatal(err)
 	}
-	pack := core.(*ruleCora).packs["gbjk-zhifu"]
-	if pack.Version != "cora-gbjk-v0.1.1" {
-		t.Fatalf("experience version=%q", pack.Version)
+	decision, err := core.Decide(context.Background(), DecisionRequest{Event: Event{
+		ProductLine: "payments", Service: "checkout", ExceptionType: "DatabaseUnavailable",
+	}})
+	if err != nil {
+		t.Fatal(err)
 	}
-	rules := pack.Rules
-	if len(rules) != 131 {
-		t.Fatalf("loaded %d Cora rules, want 131", len(rules))
+	if decision.Decision != DecisionObserve || decision.Source != "framework_default" ||
+		decision.RuleID != "cora.default.untrained-product-line" {
+		t.Fatalf("decision=%+v", decision)
 	}
+}
 
+func TestExternalExperiencePackGoldenCases(t *testing.T) {
+	core := testRuleCore(t)
 	tests := []struct {
-		name     string
-		event    Event
-		decision string
-		ruleID   string
-		source   string
+		name, wantDecision, wantRule, wantRootCause, wantTraceRole string
+		event                                                      Event
 	}{
-		{
-			name: "database disconnect needs attention",
-			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
-				Logger:        "com.alibaba.druid.pool.DruidPooledStatement",
-				ExceptionType: "com.mysql.cj.jdbc.exceptions.CommunicationsException",
-				Message:       "CommunicationsException while checking pooled connection"},
-			decision: DecisionAttention, ruleID: "at_01", source: "experience_pack",
-		},
-		{
-			name: "expired client token is ignored",
-			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-gateway",
-				Logger: "com.guanbai.RouterServiceImpl", ExceptionType: "TokenException",
-				Message: "token expired", Stacktrace: "at com.guanbai.RouterServiceImpl.checkAccess(RouterServiceImpl.java:42)"},
-			decision: DecisionIgnore, ruleID: "ig_03", source: "experience_pack",
-		},
-		{
-			name: "confirmed normal subsidy validation wrapped by redisson is ignored",
-			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
-				Logger: "com.gbjk.common.redis.service.RedissonService", ExceptionType: "logback.ERROR",
-				Message:     "分布式锁Runnable方法执行失败：",
-				Stacktrace:  "at com.gbjk.common.redis.service.RedissonService.lockFun(RedissonService.java:118)",
-				Breadcrumbs: []Breadcrumb{{Message: "事务日志切面回滚，异常信息：[特殊人群补助]未在投保信息中找到"}}},
-			decision: DecisionIgnore, ruleID: "ig_63", source: "experience_pack",
-		},
-		{
-			name: "confirmed normal subsidy validation wrapped by seata is ignored",
-			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
-				Logger:        "com.gbjk.common.security.handler.GlobalExceptionHandler",
-				ExceptionType: "com.gbjk.common.core.exception.UtilException",
-				Message:       "请求地址'/inner/cases/addClaimCasesV1',发生未知异常.",
-				Stacktrace:    "at io.seata.tm.api.DefaultGlobalTransaction.rollback(DefaultGlobalTransaction.java:171)",
-				Breadcrumbs:   []Breadcrumb{{Message: "异常信息：[特殊人群补助]未在投保信息中找到"}}},
-			decision: DecisionIgnore, ruleID: "ig_63", source: "experience_pack",
-		},
-		{
-			name: "other redisson execution failure still needs attention",
-			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
-				Logger: "com.gbjk.common.redis.service.RedissonService", ExceptionType: "logback.ERROR",
-				Message:    "分布式锁Runnable方法执行失败：",
-				Stacktrace: "at com.gbjk.common.redis.service.RedissonService.lockFun(RedissonService.java:118)"},
-			decision: DecisionAttention, ruleID: "at_02", source: "experience_pack",
-		},
-		{
-			name: "other seata exception still needs attention",
-			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
-				Logger:        "com.gbjk.common.security.handler.GlobalExceptionHandler",
-				ExceptionType: "com.gbjk.common.core.exception.UtilException",
-				Message:       "unknown failure",
-				Stacktrace:    "at io.seata.tm.api.DefaultGlobalTransaction.rollback(DefaultGlobalTransaction.java:171)"},
-			decision: DecisionAttention, ruleID: "at_03", source: "experience_pack",
-		},
-		{
-			name: "unmatched Guanbai error stays observable",
-			event: Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
-				Logger: "com.guanbai.NewFailure", ExceptionType: "NewFailure", Message: "new failure"},
-			decision: DecisionObserve, ruleID: "cora.default.unmatched", source: "experience_pack",
-		},
-		{
-			name: "same database text does not leak to another product line",
-			event: Event{ProductLine: "qikang-zhifu", Service: "qk-order",
-				Logger:        "com.alibaba.druid.pool.DruidPooledStatement",
-				ExceptionType: "CommunicationsException", Message: "CommunicationsException"},
-			decision: DecisionObserve, ruleID: "cora.default.untrained-product-line", source: "framework_default",
-		},
+		{name: "database failure", wantDecision: DecisionAttention,
+			wantRule: "attention.database-unavailable", wantTraceRole: TraceRoleCause,
+			event: Event{ProductLine: "payments", Service: "ledger", Logger: "DatabaseClient", ExceptionType: "DatabaseUnavailable"}},
+		{name: "known cancellation", wantDecision: DecisionIgnore,
+			wantRule: "ignore.client-cancelled", wantRootCause: "payments.client-cancelled", wantTraceRole: TraceRoleCause,
+			event: Event{ProductLine: "payments", Service: "checkout", Logger: "CheckoutHandler", Message: "client cancelled request"}},
+		{name: "retry wrapper", wantDecision: DecisionAttention,
+			wantRule: "attention.retry-wrapper", wantTraceRole: TraceRoleWrapper,
+			event: Event{ProductLine: "payments", Service: "checkout", Logger: "RetryExecutor", Message: "retry exhausted"}},
+		{name: "unmatched", wantDecision: DecisionObserve, wantRule: "cora.default.unmatched",
+			event: Event{ProductLine: "payments", Service: "checkout", Message: "unexpected response"}},
+		{name: "untrained product line", wantDecision: DecisionObserve, wantRule: "cora.default.untrained-product-line",
+			event: Event{ProductLine: "orders", Service: "api", ExceptionType: "DatabaseUnavailable"}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			decision, err := core.Decide(context.Background(), DecisionRequest{Event: test.event, FirstOccurrence: true})
+			decision, err := core.Decide(context.Background(), DecisionRequest{Event: test.event, Fingerprint: Fingerprint(test.event)})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if decision.Decision != test.decision || decision.RuleID != test.ruleID || decision.Source != test.source {
+			if decision.Decision != test.wantDecision || decision.RuleID != test.wantRule ||
+				(test.wantRootCause != "" && decision.RootCauseKey != test.wantRootCause) ||
+				(test.wantTraceRole != "" && decision.TraceRole != test.wantTraceRole) {
 				t.Fatalf("decision=%+v", decision)
 			}
 		})
 	}
 }
 
-func TestStorePersistsCoraDecisionAndAttentionExcludesIgnore(t *testing.T) {
-	store, err := OpenStore(t.TempDir() + "/cora.db")
+func TestRootCauseKeyIsStableAcrossServiceAndNodeButSeparatesMessages(t *testing.T) {
+	core := testRuleCore(t)
+	base := Event{ProductLine: "payments", Service: "checkout", Logger: "CheckoutHandler",
+		Message: "client cancelled request 123", Labels: map[string]string{"node": "node-a"}}
+	otherService := base
+	otherService.Service = "ledger"
+	otherService.Labels = map[string]string{"node": "node-b"}
+	differentCause := base
+	differentCause.Logger = "OtherHandler"
+	differentCause.Message = "upstream timed out"
+	decide := func(event Event) CoraDecision {
+		decision, err := core.Decide(context.Background(), DecisionRequest{Event: event, Fingerprint: Fingerprint(event)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return decision
+	}
+	first := decide(base)
+	if first.RootCauseKey != "payments.client-cancelled" || decide(otherService).RootCauseKey != first.RootCauseKey {
+		t.Fatalf("root cause drifted: first=%+v other=%+v", first, decide(otherService))
+	}
+	if got := decide(differentCause); got.RootCauseKey == first.RootCauseKey {
+		t.Fatalf("different message merged into known cause: %+v", got)
+	}
+}
+
+func TestStorePersistsExternalDecisionAndAttentionExcludesIgnore(t *testing.T) {
+	store, err := OpenStoreWithCora(t.TempDir()+"/cora.db", testRuleCore(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-
-	attention := Event{ProductLine: "gbjk-zhifu", Service: "gb-order",
-		Logger: "DruidDataSource", ExceptionType: "CommunicationsException", Message: "CommunicationsException"}
-	ignored := Event{ProductLine: "gbjk-zhifu", Service: "gb-gateway",
-		Logger: "RouterServiceImpl", ExceptionType: "TokenException", Message: "expired",
-		Stacktrace: "at com.guanbai.RouterServiceImpl.checkAccess(RouterServiceImpl.java:42)"}
+	attention := Event{ProductLine: "payments", Service: "ledger", Logger: "DatabaseClient", ExceptionType: "DatabaseUnavailable"}
+	ignored := Event{ProductLine: "payments", Service: "checkout", Logger: "CheckoutHandler",
+		ExceptionType: "ClientCancelled", Message: "client cancelled request"}
 	for _, event := range []Event{attention, ignored} {
 		if err := store.Record(context.Background(), event); err != nil {
 			t.Fatal(err)
 		}
 	}
-
-	items, err := store.Attention(context.Background(), "gbjk-zhifu")
+	items, err := store.Attention(context.Background(), "payments")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Decision != DecisionAttention || items[0].RuleID != "at_01" {
+	if len(items) != 1 || items[0].RuleID != "attention.database-unavailable" {
 		t.Fatalf("attention items=%+v", items)
 	}
-
-	request := httptest.NewRequest(http.MethodGet, "/v1/attention?product_line=gbjk-zhifu", nil)
+	request := httptest.NewRequest(http.MethodGet, "/v1/attention?product_line=payments", nil)
 	response := httptest.NewRecorder()
 	Handler(store).ServeHTTP(response, request)
 	if response.Code != http.StatusOK {

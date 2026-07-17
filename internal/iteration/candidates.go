@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -12,15 +13,22 @@ import (
 	"github.com/claracore/cora/internal/cora"
 )
 
+var dynamicNumberPattern = regexp.MustCompile(`\d{6,}`)
+
 func buildTriage(runID string, problems []DailyProblem, escalations []FrequencyEscalation, evidence map[string][]CodeEvidence) []TriageResult {
 	escalated := map[string]bool{}
 	for _, item := range escalations {
-		escalated[item.Service+":"+item.Fingerprint] = true
+		escalated[problemKey(item.Service, item.Fingerprint, item.RootCauseKey)] = true
 	}
 	result := make([]TriageResult, 0, len(problems))
 	for _, problem := range problems {
 		codeEvidenceStatus := "not_collected"
-		if items := evidence[problem.Service+":"+problem.Fingerprint]; len(items) > 0 {
+		key := problemKey(problem.Service, problem.Fingerprint, problem.RootCauseKey)
+		items := evidence[key]
+		if len(items) == 0 {
+			items = evidence[problemKey(problem.Service, problem.Fingerprint, "")]
+		}
+		if len(items) > 0 {
 			codeEvidenceStatus = items[0].Status
 		}
 		classification := problem.Decision
@@ -28,13 +36,14 @@ func buildTriage(runID string, problems []DailyProblem, escalations []FrequencyE
 		if problem.State == cora.ProblemStateRecurring {
 			classification = "recurring"
 			next = "compare the recurrence with the prior case and deployed rule provenance"
-		} else if escalated[problem.Service+":"+problem.Fingerprint] {
+		} else if escalated[key] {
 			classification = "ignore_frequency_escalation"
 			next = "verify the frequency baseline and business meaning before changing the ignore rule"
 		}
 		result = append(result, TriageResult{
 			SchemaVersion: "cora.triage-result.v1", IterationRunID: runID,
 			ProductLine: problem.ProductLine, Service: problem.Service, Fingerprint: problem.Fingerprint,
+			RootCauseKey:   problem.RootCauseKey,
 			Classification: classification, WindowCount: problem.WindowCount,
 			PriorDailyAverage: problem.PriorDailyAverage, FrequencyRatio: problem.FrequencyRatio,
 			CurrentDecision: problem.Decision, CurrentRuleID: problem.RuleID,
@@ -51,7 +60,7 @@ func crystallizeCandidates(runID, productLine, snapshotID string, cases []cora.P
 		if item.ProductLine != productLine || !item.Handled {
 			continue
 		}
-		key := item.Service + ":" + item.Fingerprint
+		key := problemKey(item.Service, item.Fingerprint, item.ContextSnapshot.Decision.RootCauseKey)
 		groups[key] = append(groups[key], item)
 	}
 	keys := make([]string, 0, len(groups))
@@ -66,6 +75,9 @@ func crystallizeCandidates(runID, productLine, snapshotID string, cases []cora.P
 			continue
 		}
 		problemEvidence := evidence[key]
+		if len(problemEvidence) == 0 {
+			problemEvidence = evidence[problemKey(items[0].Service, items[0].Fingerprint, "")]
+		}
 		if !hasVerifiedEvidence(problemEvidence) {
 			continue
 		}
@@ -133,7 +145,8 @@ func consistentOutcomes(items []cora.ProblemCase) bool {
 	first := items[0]
 	for _, item := range items[1:] {
 		if item.IsRealProblem != first.IsRealProblem || item.Service != first.Service ||
-			item.Fingerprint != first.Fingerprint {
+			item.Fingerprint != first.Fingerprint ||
+			item.ContextSnapshot.Decision.RootCauseKey != first.ContextSnapshot.Decision.RootCauseKey {
 			return false
 		}
 	}
@@ -183,6 +196,7 @@ func evaluateCandidates(runID, productLine, snapshotID string, candidates []Rule
 		CaseSnapshotID: snapshotID, CandidateCount: len(candidates), DailyProblems: len(problems),
 		ProblemTransitions: map[string]int{}, OccurrenceTransitions: map[string]int64{},
 		CandidateMatches: map[string][]string{}, FrequencyEscalations: escalations,
+		ErrorIdentities: buildErrorIdentities(problems),
 		Notes: []string{
 			"candidate decisions are evaluated in shadow only and are never activated",
 			"daily counts use trend window_end in the selected business-day boundary",
@@ -195,7 +209,7 @@ func evaluateCandidates(runID, productLine, snapshotID string, candidates []Rule
 		report.OccurrenceTransitions[transition] += problem.WindowCount
 		report.DailyOccurrences += problem.WindowCount
 		if candidateID != "" {
-			report.CandidateMatches[candidateID] = append(report.CandidateMatches[candidateID], problem.Service+":"+problem.Fingerprint)
+			report.CandidateMatches[candidateID] = append(report.CandidateMatches[candidateID], problemKey(problem.Service, problem.Fingerprint, problem.RootCauseKey))
 		}
 	}
 	for _, item := range cases {
@@ -225,6 +239,85 @@ func evaluateCandidates(runID, productLine, snapshotID string, candidates []Rule
 		sort.Strings(report.CandidateMatches[key])
 	}
 	return report
+}
+
+func buildErrorIdentities(problems []DailyProblem) []ErrorIdentity {
+	byKey := make(map[string]DailyProblem, len(problems))
+	for _, problem := range problems {
+		byKey[problemKey(problem.Service, problem.Fingerprint, problem.RootCauseKey)] = problem
+	}
+	result := make([]ErrorIdentity, 0, len(problems))
+	for _, problem := range problems {
+		relatedSet := map[string]bool{}
+		for _, key := range problem.RelatedProblemKeys {
+			if related, ok := byKey[key]; ok && related.RuleID != "" && related.RuleID != problem.RuleID {
+				relatedSet[related.RuleID] = true
+			}
+		}
+		relatedRuleIDs := make([]string, 0, len(relatedSet))
+		for ruleID := range relatedSet {
+			relatedRuleIDs = append(relatedRuleIDs, ruleID)
+		}
+		sort.Strings(relatedRuleIDs)
+		result = append(result, ErrorIdentity{
+			ProblemID: problem.ProblemID, RuleID: problem.RuleID, Name: problem.Category,
+			Reason: problem.Reason, Signature: problemSignature(problem), Service: problem.Service,
+			Fingerprint: problem.Fingerprint, RootCauseKey: problem.RootCauseKey, Decision: problem.Decision,
+			WindowCount: problem.WindowCount, RelatedRuleIDs: relatedRuleIDs,
+		})
+	}
+	return result
+}
+
+func problemKey(service, fingerprint, rootCauseKey string) string {
+	return service + ":" + fingerprint + ":" + rootCauseKey
+}
+
+func problemSignature(problem DailyProblem) string {
+	if problem.Detail == nil {
+		return problem.Category
+	}
+	var latestHandled *cora.ProblemCase
+	for index := range problem.Detail.Cases {
+		item := &problem.Detail.Cases[index]
+		if !item.Handled || strings.TrimSpace(item.RootCause) == "" {
+			continue
+		}
+		if latestHandled == nil || item.RecordedAt.After(latestHandled.RecordedAt) {
+			latestHandled = item
+		}
+	}
+	if latestHandled != nil {
+		return strings.TrimSpace(latestHandled.RootCause)
+	}
+	var event cora.Event
+	if err := json.Unmarshal([]byte(problem.Detail.Problem.LatestSample), &event); err != nil {
+		return problem.Category
+	}
+	parts := make([]string, 0, 3)
+	if value := strings.TrimSpace(event.ExceptionType); value != "" {
+		parts = append(parts, value)
+	}
+	if value := strings.TrimSpace(event.Method); value != "" {
+		parts = append(parts, value)
+	}
+	if value := stableSignatureText(event.Message); value != "" {
+		parts = append(parts, value)
+	}
+	if len(parts) == 0 {
+		return problem.Category
+	}
+	return strings.Join(parts, " · ")
+}
+
+func stableSignatureText(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	for _, marker := range []string{" notifyRequest=", " request=", " ordersDto=", " customerId=", " 上下文:"} {
+		if index := strings.Index(value, marker); index >= 0 {
+			value = value[:index]
+		}
+	}
+	return dynamicNumberPattern.ReplaceAllString(strings.TrimSpace(value), "[ID]")
 }
 
 func decisionForProblem(problem DailyProblem, candidates []RuleCandidate) (string, string) {

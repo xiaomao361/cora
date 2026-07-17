@@ -166,13 +166,13 @@ func createFixtureDatabase(t *testing.T, path string) {
 		t.Fatal(err)
 	}
 	statements := []string{
-		`CREATE TABLE problems (id INTEGER PRIMARY KEY, product_line TEXT, fingerprint TEXT, service TEXT, environment TEXT, exception_type TEXT, logger TEXT, count INTEGER, first_seen TEXT, last_seen TEXT, first_sample TEXT, latest_sample TEXT, state TEXT, state_changed_at TEXT)`,
-		`CREATE TABLE trend_points (id INTEGER PRIMARY KEY, product_line TEXT, service TEXT, fingerprint TEXT, count INTEGER, window_start TEXT, window_end TEXT)`,
-		`CREATE TABLE cora_decisions (id INTEGER PRIMARY KEY, product_line TEXT, service TEXT, fingerprint TEXT, decision TEXT, category TEXT, rule_id TEXT, reason TEXT, source TEXT, experience_version TEXT, decided_at TEXT)`,
-		`CREATE TABLE node_occurrences (id INTEGER PRIMARY KEY, product_line TEXT, service TEXT, fingerprint TEXT, node TEXT, deployment_group TEXT, environment TEXT, count INTEGER, first_seen TEXT, last_seen TEXT)`,
-		`CREATE TABLE node_trend_points (id INTEGER PRIMARY KEY, product_line TEXT, service TEXT, fingerprint TEXT, node TEXT, deployment_group TEXT, count INTEGER, window_start TEXT, window_end TEXT)`,
+		`CREATE TABLE problems (id INTEGER PRIMARY KEY, product_line TEXT, fingerprint TEXT, root_cause_key TEXT NOT NULL DEFAULT '', service TEXT, environment TEXT, exception_type TEXT, logger TEXT, count INTEGER, first_seen TEXT, last_seen TEXT, first_sample TEXT, latest_sample TEXT, state TEXT, state_changed_at TEXT)`,
+		`CREATE TABLE trend_points (id INTEGER PRIMARY KEY, product_line TEXT, service TEXT, fingerprint TEXT, root_cause_key TEXT NOT NULL DEFAULT '', count INTEGER, window_start TEXT, window_end TEXT)`,
+		`CREATE TABLE cora_decisions (id INTEGER PRIMARY KEY, product_line TEXT, service TEXT, fingerprint TEXT, root_cause_key TEXT NOT NULL DEFAULT '', decision TEXT, category TEXT, rule_id TEXT, reason TEXT, source TEXT, experience_version TEXT, decided_at TEXT)`,
+		`CREATE TABLE node_occurrences (id INTEGER PRIMARY KEY, product_line TEXT, service TEXT, fingerprint TEXT, root_cause_key TEXT NOT NULL DEFAULT '', node TEXT, deployment_group TEXT, environment TEXT, count INTEGER, first_seen TEXT, last_seen TEXT)`,
+		`CREATE TABLE node_trend_points (id INTEGER PRIMARY KEY, product_line TEXT, service TEXT, fingerprint TEXT, root_cause_key TEXT NOT NULL DEFAULT '', node TEXT, deployment_group TEXT, count INTEGER, window_start TEXT, window_end TEXT)`,
 		`CREATE TABLE problem_cases (id INTEGER PRIMARY KEY, problem_id INTEGER, product_line TEXT, service TEXT, fingerprint TEXT, actor TEXT, is_real_problem INTEGER, handled INTEGER, root_cause TEXT, action TEXT, prior_state TEXT, resulting_state TEXT, context_snapshot TEXT, recorded_at TEXT)`,
-		`PRAGMA user_version = 5`,
+		`PRAGMA user_version = 7`,
 	}
 	for _, statement := range statements {
 		if _, err := db.Exec(statement); err != nil {
@@ -189,26 +189,26 @@ func createFixtureDatabase(t *testing.T, path string) {
 			handled = 0
 		}
 		fingerprint := fixtureFingerprint(id)
-		if _, err := db.Exec(`INSERT INTO problems VALUES(?, 'line-a', ?, 'svc', 'prod', 'Error', 'logger', ?, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 'first sample', 'latest sample', ?, '2026-01-02T00:00:00Z')`, id, fingerprint, id*10, state); err != nil {
+		if _, err := db.Exec(`INSERT INTO problems VALUES(?, 'line-a', ?, '', 'svc', 'prod', 'Error', 'logger', ?, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 'first sample', 'latest sample', ?, '2026-01-02T00:00:00Z')`, id, fingerprint, id*10, state); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO cora_decisions VALUES(?, 'line-a', 'svc', ?, 'attention', 'test', 'rule', 'reason', 'pack', 'v1', '2026-01-01T00:00:00Z')`, id, fingerprint); err != nil {
+		if _, err := db.Exec(`INSERT INTO cora_decisions VALUES(?, 'line-a', 'svc', ?, '', 'attention', 'test', 'rule', 'reason', 'pack', 'v1', '2026-01-01T00:00:00Z')`, id, fingerprint); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := db.Exec(`INSERT INTO problem_cases VALUES(?, ?, 'line-a', 'svc', ?, 'tester', 1, ?, 'root', 'action', 'new', 'resolved', '{}', '2026-01-02T00:00:00Z')`, id, id, fingerprint, handled); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO trend_points VALUES(?, 'line-a', 'svc', ?, 1, '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z')`, id, fingerprint); err != nil {
+		if _, err := db.Exec(`INSERT INTO trend_points VALUES(?, 'line-a', 'svc', ?, '', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z')`, id, fingerprint); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO node_occurrences VALUES(?, 'line-a', 'svc', ?, 'node', 'group', 'prod', 1, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z')`, id, fingerprint); err != nil {
+		if _, err := db.Exec(`INSERT INTO node_occurrences VALUES(?, 'line-a', 'svc', ?, '', 'node', 'group', 'prod', 1, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z')`, id, fingerprint); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := db.Exec(`INSERT INTO node_trend_points VALUES(?, 'line-a', 'svc', ?, 'node', 'group', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z')`, id, fingerprint); err != nil {
+		if _, err := db.Exec(`INSERT INTO node_trend_points VALUES(?, 'line-a', 'svc', ?, '', 'node', 'group', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:01:00Z')`, id, fingerprint); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := db.Exec(`INSERT INTO problems VALUES(99, 'line-b', 'ffffffffffffffffffffffffffffffff', 'secret-service', 'prod', 'Error', 'logger', 999, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 'secret', 'secret', 'resolved', '2026-01-02T00:00:00Z')`); err != nil {
+	if _, err := db.Exec(`INSERT INTO problems VALUES(99, 'line-b', 'ffffffffffffffffffffffffffffffff', '', 'secret-service', 'prod', 'Error', 'logger', 999, '2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', 'secret', 'secret', 'resolved', '2026-01-02T00:00:00Z')`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {

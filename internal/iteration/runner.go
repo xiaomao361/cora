@@ -20,7 +20,7 @@ import (
 )
 
 var safeIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-var commitPattern = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
+var commitPattern = regexp.MustCompile(`^[0-9a-f]{7,64}(?:-dirty)?$`)
 
 type Result struct {
 	Directory            string `json:"directory"`
@@ -288,13 +288,13 @@ func summarizeSnapshot(ctx context.Context, source Source, config Config, snapsh
 		if problem.ProductLine != config.ProductLine || problem.WindowCount <= 0 {
 			return nil, nil, DailySummary{}, fmt.Errorf("problem %d crossed the snapshot boundary", problem.ProblemID)
 		}
-		detail, err := source.Problem(ctx, config.ProductLine, problem.Service, problem.Fingerprint)
+		detail, err := source.Problem(ctx, config.ProductLine, problem.Service, problem.Fingerprint, problem.RootCauseKey)
 		if err != nil {
 			return nil, nil, DailySummary{}, fmt.Errorf("get problem %s/%s: %w", problem.Service, problem.Fingerprint, err)
 		}
 		item := DailyProblem{ProblemID: problem.ProblemID, ProductLine: problem.ProductLine,
-			Service: problem.Service, Fingerprint: problem.Fingerprint, State: problem.State,
-			Decision: problem.Decision, Category: problem.Category,
+			Service: problem.Service, Fingerprint: problem.Fingerprint, RootCauseKey: problem.RootCauseKey, State: problem.State,
+			Decision: problem.Decision, Category: problem.Category, Reason: problem.Reason,
 			RuleID: problem.RuleID, WindowCount: problem.WindowCount,
 			PriorDailyAverage: round(problem.PriorDailyAverage), FrequencyRatio: roundPointer(problem.FrequencyRatio),
 			FirstSeen: problem.FirstSeen, LastSeen: problem.LastSeen, Detail: &detail}
@@ -303,7 +303,7 @@ func summarizeSnapshot(ctx context.Context, source Source, config Config, snapsh
 				DeploymentGroup: node.DeploymentGroup, Count: node.Count})
 		}
 		for _, related := range detail.RelatedProblems {
-			item.RelatedProblemKeys = append(item.RelatedProblemKeys, related.Service+":"+related.Fingerprint)
+			item.RelatedProblemKeys = append(item.RelatedProblemKeys, problemKey(related.Service, related.Fingerprint, related.RootCauseKey))
 		}
 		item.CaseIDs = append(item.CaseIDs, problem.CaseIDs...)
 		sort.Strings(item.RelatedProblemKeys)
@@ -339,7 +339,7 @@ func frequencyEscalations(config Config, problems []DailyProblem) []FrequencyEsc
 		if reason == "" {
 			continue
 		}
-		result = append(result, FrequencyEscalation{Service: problem.Service, Fingerprint: problem.Fingerprint,
+		result = append(result, FrequencyEscalation{Service: problem.Service, Fingerprint: problem.Fingerprint, RootCauseKey: problem.RootCauseKey,
 			RuleID: problem.RuleID, WindowCount: problem.WindowCount,
 			PriorDailyAverage: problem.PriorDailyAverage, FrequencyRatio: problem.FrequencyRatio,
 			BaselineDays: config.BaselineDays, Reason: reason,
@@ -414,7 +414,7 @@ func loadCodeEvidence(path, productLine string) ([]CodeEvidence, map[string][]Co
 			return nil, nil, fmt.Errorf("invalid code evidence %q or product-line boundary", item.EvidenceID)
 		}
 		items = append(items, item)
-		key := item.Service + ":" + item.Fingerprint
+		key := problemKey(item.Service, item.Fingerprint, item.RootCauseKey)
 		byProblem[key] = append(byProblem[key], item)
 	}
 	if err := scanner.Err(); err != nil {

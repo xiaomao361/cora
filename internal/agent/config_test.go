@@ -24,30 +24,30 @@ clients:
   - url: http://cora.internal:8080/v1/events:batch
     bearer_token_file: ` + tokenPath + `
 defaults:
-  product_line: qikang-zhifu
+  product_line: orders
   timezone: Asia/Shanghai
 agent:
   start_at: end
   batch_wait: 2s
 scrape_configs:
-  - job_name: gb-auth_log_push
+  - job_name: identity_log_push
     static_configs:
       - targets: [localhost]
         labels:
-          app: gb-auth
+          app: identity
           server: backup
-          ip: 172.16.0.229
+          ip: 192.0.2.20
           env: prod
           group: platform
-          __path__: /logs/gb-auth/supervisor.log
-  - job_name: gb-order_log_push
+          __path__: /logs/identity/supervisor.log
+  - job_name: checkout_log_push
     static_configs:
       - targets: [localhost]
         labels:
-          app: gb-order
+          app: checkout
           env: test
-          product_line: qikang-shop
-          __path__: /logs/gb-order/supervisor.log
+          product_line: orders-shop
+          __path__: /logs/checkout/supervisor.log
 `
 	if err := os.WriteFile(configPath, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -60,13 +60,13 @@ scrape_configs:
 		t.Fatalf("runtime=%+v", runtime)
 	}
 	auth := runtime.Targets[0]
-	if auth.ProductLine != "qikang-zhifu" || auth.Service != "gb-auth" || auth.Environment != "prod" ||
-		auth.Labels["ip"] != "172.16.0.229" || auth.Labels["job"] != "gb-auth_log_push" ||
+	if auth.ProductLine != "orders" || auth.Service != "identity" || auth.Environment != "prod" ||
+		auth.Labels["ip"] != "192.0.2.20" || auth.Labels["job"] != "identity_log_push" ||
 		auth.BearerToken != "config-test-token" {
 		t.Fatalf("auth target=%+v", auth)
 	}
 	order := runtime.Targets[1]
-	if order.ProductLine != "qikang-shop" || order.Environment != "test" || order.BatchWait.String() != "2s" {
+	if order.ProductLine != "orders-shop" || order.Environment != "test" || order.BatchWait.String() != "2s" {
 		t.Fatalf("order target=%+v", order)
 	}
 }
@@ -115,8 +115,8 @@ func TestConfigRejectsLokiEndpointAndDuplicatePaths(t *testing.T) {
 	}
 }
 
-func TestCanaryExampleDefinesAuthenticatedNodeBoundary(t *testing.T) {
-	data, err := os.ReadFile("../../config/cora-agent-canary.example.yml")
+func TestAgentExampleDefinesAuthenticatedNodeBoundary(t *testing.T) {
+	data, err := os.ReadFile("../../config/cora-agent.example.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestCanaryExampleDefinesAuthenticatedNodeBoundary(t *testing.T) {
 	if err := os.WriteFile(tokenPath, []byte("canary-test-token\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	data = []byte(strings.Replace(string(data), "/home/cora/auth.token", tokenPath, 1))
+	data = []byte(strings.Replace(string(data), "/etc/cora-agent/auth.token", tokenPath, 1))
 	configPath := filepath.Join(t.TempDir(), "agent.yml")
 	if err := os.WriteFile(configPath, data, 0o600); err != nil {
 		t.Fatal(err)
@@ -134,8 +134,32 @@ func TestCanaryExampleDefinesAuthenticatedNodeBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(runtime.Targets) != 1 || runtime.Targets[0].BearerToken != "canary-test-token" ||
-		runtime.Targets[0].Labels["node"] != "service01" ||
-		runtime.Targets[0].Labels["deployment_group"] != "service" {
+		runtime.Targets[0].Labels["node"] != "checkout-01" ||
+		runtime.Targets[0].Labels["deployment_group"] != "checkout" {
+		t.Fatalf("runtime=%+v", runtime)
+	}
+}
+
+func TestMultiAgentExampleDefinesTwoGenericTargets(t *testing.T) {
+	data, err := os.ReadFile("../../config/cora-agent-multi.example.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tokenPath := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tokenPath, []byte("multi-test-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), "/etc/cora-agent/auth.token", tokenPath, 1))
+	configPath := filepath.Join(t.TempDir(), "agent.yml")
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := LoadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.Targets) != 2 || runtime.Targets[0].ProductLine != "payments" ||
+		runtime.Targets[0].Service != "checkout-api" || runtime.Targets[1].Service != "ledger-worker" {
 		t.Fatalf("runtime=%+v", runtime)
 	}
 }

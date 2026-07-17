@@ -1,3 +1,0 @@
-2026-07-13 15:00:01.100 trace_id: qk-auth-trace [http-nio-8080-exec-2] ERROR com.gbjk.auth.LoginService - [login,88] - login dependency failed
-java.lang.IllegalStateException: dependency failed
-	at com.gbjk.auth.LoginService.login(LoginService.java:88)

@@ -17,6 +17,7 @@ type Runtime struct {
 	HTTPListenAddress    string
 	HTTPListenPort       int
 	DatabasePath         string
+	ExperiencePackDir    string
 	BearerTokenFile      string
 	AllowUnauthenticated bool
 	FlushInterval        time.Duration
@@ -30,6 +31,7 @@ func (runtime Runtime) Address() string {
 type fileConfig struct {
 	Server      serverBlock      `yaml:"server"`
 	Storage     storageBlock     `yaml:"storage"`
+	Core        coreBlock        `yaml:"core"`
 	Auth        authBlock        `yaml:"auth"`
 	Aggregation aggregationBlock `yaml:"aggregation"`
 }
@@ -41,6 +43,10 @@ type serverBlock struct {
 
 type storageBlock struct {
 	Path string `yaml:"path"`
+}
+
+type coreBlock struct {
+	ExperiencePackDir string `yaml:"experience_pack_dir"`
 }
 
 type authBlock struct {
@@ -77,6 +83,7 @@ func (source fileConfig) runtime() (Runtime, error) {
 		HTTPListenAddress:    source.Server.HTTPListenAddress,
 		HTTPListenPort:       source.Server.HTTPListenPort,
 		DatabasePath:         source.Storage.Path,
+		ExperiencePackDir:    source.Core.ExperiencePackDir,
 		BearerTokenFile:      source.Auth.BearerTokenFile,
 		AllowUnauthenticated: source.Auth.AllowUnauthenticated,
 		MaxActive:            source.Aggregation.MaxActive,

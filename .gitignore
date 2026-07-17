@@ -4,7 +4,8 @@
 /cora-canary
 /dist/
 /out/
-/config/cora-agent-gb-order-*.yml
+/private/
+/config/*.local.yml
 .DS_Store
 *.db
 *.db-shm

@@ -1,150 +1,36 @@
-# Cora Core v0 Contract and Guanbai Cora Pack
+# Cora Core v0 contract
 
-## Boundary
+## Decision boundary
 
-Cora Server owns deterministic event ingestion, fingerprints, aggregation,
-storage, and query APIs. Cora Core receives one candidate Problem at flush time
-and returns an explainable attention decision. The Go interface is deliberately
-compatible with a future out-of-process Core:
+For each aggregated occurrence, Core receives an Event, fingerprint, occurrence
+count, and first-occurrence flag. It returns:
 
-```json
-{
-  "event": {},
-  "fingerprint": "...",
-  "occurrence_count": 3,
-  "first_occurrence": false
-}
-```
+- `decision`: `attention`, `observe`, or `ignore`.
+- `root_cause_key`: deterministic cause identity independent of node and service.
+- `category`, `rule_id`, `reason`, and `source`.
+- optional `experience_version` and `trace_role`.
+- `decided_at`.
 
-The decision contract is:
+The JSON contracts live under `schemas/`.
 
-```json
-{
-  "decision": "attention | observe | ignore",
-  "category": "...",
-  "rule_id": "...",
-  "reason": "...",
-  "source": "experience_pack | framework_default",
-  "experience_version": "...",
-  "decided_at": "..."
-}
-```
+## Safe defaults
 
-Every aggregate flush reevaluates the latest representative event with the
-updated total occurrence count. The decision is stored transactionally with
-the service-scoped Problem update in SQLite schema v5.
+- No Pack for a product line: `observe` from `framework_default`.
+- No matching rule in a loaded Pack: the Pack's declared default, normally `observe`.
+- Core error or invalid decision: fail open to `observe`; occurrence facts still persist.
+- Product-line Packs never match events from another product line.
 
-Cora Core is not allowed to block fact persistence. If the Core fails or
-returns an invalid decision, Cora Server stores the Problem and records a
-`framework_default` `observe` decision so the failure remains visible.
+## Identity
 
-## Iteration boundary
+The stored Problem identity is
+`product_line + service + fingerprint + root_cause_key`. Node occurrences and
+trend points retain the same cause key. This prevents one generic wrapper
+fingerprint from collapsing unrelated causes while still allowing read-only
+incident grouping.
 
-The interface is replaceable, but the current implementation is not yet a
-self-iterating Core: it embeds JSON experience Packs into the Server binary and
-loads them once at process start. A rule change therefore still requires a new
-binary release.
+## Pack boundary
 
-The original target is a concrete pipeline rather than generic online learning:
-rules provide the stable fast path; an LLM judges gray-zone Problems with current
-facts and retrieved product-line cases; Agent outcomes become new cases; repeated
-consistent cases may be crystallized into a human-reviewed rule. A learned local
-filter is gated until a product line has enough reviewed cases and a frozen eval
-set.
-
-The repository now persists immutable product-line cases through the same MCP
-surface used for query, and exact Problem detail returns its prior cases.
-Problem detail also returns related Problems whose representative samples share
-trace IDs, so an Agent can recognize wrapper symptoms without merging or
-discarding facts. The MCP read surface bounds representative breadcrumbs and
-redacts signed OSS/S3 URL credentials, including in historical samples; case
-storage and export retain the complete immutable snapshot.
-`cora_export_cases` provides a product-line-scoped, stable paginated export for
-the offline boundary: the first page freezes a high-water case ID, later pages
-reuse it, and a case written during export belongs only to the next snapshot.
-This is the production-feedback transport into local iteration; it does not put
-bulk case data into Core automatically and does not activate rules. Case top-k
-retrieval inside Core, LLM adapter, candidate-rule promotion, hot reload, and a
-learned filter remain absent.
-Static Pack reload alone would improve operations but would not fulfill the Core
-iteration loop. Automatic production activation without evaluation and rollback
-is outside the current direction.
-
-## Guanbai experience baseline
-
-The embedded `gbjk-zhifu` pack is the first versioned product-line Cora Pack
-experience baseline. It contains 131 reviewed rules:
-
-- 27 `attention`
-- 41 `observe`
-- 63 `ignore`
-
-The original priority is preserved: `attention`, then `observe`, then `ignore`.
-Rules match stable logger/class, stack method, message, exception, and bounded breadcrumb-message
-fragments. A narrow breadcrumb exclusion keeps one business-confirmed normal validation branch from
-being swallowed by the broader Redisson/Seata attention rules.
-No raw production logs, labeled CSV rows, legacy model weights, credentials, or
-source-system reports are copied into Cora.
-
-This is explicitly a product-line experience pack. It runs only when
-`product_line=gbjk-zhifu`. An error from another product line never matches
-these rules and receives the conservative framework default `observe`.
-
-Unmatched Guanbai events also resolve to `observe`; Cora v0 does not silently
-turn an unknown signature into `ignore`.
-
-## Query semantics
-
-`GET /v1/attention?product_line=<line>` returns `attention` and `observe`
-Problems, ordered with `attention` first. `ignore` decisions remain persisted
-but are omitted from this attention queue. `GET /v1/problems` continues to
-return all deterministic Problems regardless of Cora's decision.
-
-## Shadow evaluation
-
-Golden tests cover a database-disconnect attention rule, a client-token ignore
-rule, unmatched Guanbai fallback, and cross-product-line isolation. A real HTTP
-run ingested those shapes, flushed SQLite, and returned the expected attention
-queue.
-
-`cmd/cora-eval` performs a read-only, reproducible evaluation against a
-Cora evaluation CSV and writes aggregate JSON plus a redacted Markdown report.
-The baseline source SHA-256 is stored in the report so a later export cannot be
-mistaken for the same dataset.
-
-The current 1,404-row baseline, produced for `cora-gbjk-v0.1.0`, found:
-
-- 31 attention, 559 observe, and 814 ignore decisions.
-- 60.2% decisive coverage and 99.3% agreement among decisive rows.
-- 25/45 old attention rows remain attention; the other 20 move to explicit
-  observe under `at_05`. No old attention row becomes ignore.
-- Six historical default-ignore rows move to attention under `at_06`. Review
-  confirmed they were unmatched rather than explicitly ignored, so Cora keeps
-  the core-claim-chain failure visible.
-- 98.6% of rows repeat one of only 20 approximated Cora fingerprints.
-- No full timestamps are parseable, strict CSV parsing fails on one bare quote,
-  and exception/stack is missing on 1,403/1,404 rows.
-
-Therefore the experience pack is suitable as a conservative, explainable rule
-layer, but this dataset is not trustworthy for time-split model evaluation or
-production-fingerprint accuracy. Historical statistical weights remain
-intentionally unloaded. The `v0.1.1` narrow normal-business-branch rule is covered by live Case
-evidence and golden regression tests; the old CSV cannot exercise it because it lacks breadcrumbs.
-A fresh export must preserve full timestamps,
-exception type, stacktrace, stable source/service, and reviewed three-way labels
-before statistical model adoption is reconsidered.
-
-## Version and data gates
-
-`config/cora-base-v0.json` is the deployable Core manifest. It binds the Cora
-contract, experience-pack version, product line, evaluation evidence, and
-fail-open behavior. `schemas/cora-evaluation-row.v1.schema.json` and
-`schemas/cora-feedback.v1.schema.json` define the older evaluation feedback
-record. `schemas/cora-case.v1.schema.json` defines the active immutable outcome
-record written through MCP.
-
-Cora remains in deterministic rule mode until a new dataset has at least 300
-independently reviewed fingerprints, including at least 50 attention, 50
-ignore, and 100 observe outcomes; full timestamps, exception types, stacktraces,
-service, and source must each reach 95% coverage. Evaluation must split by time
-and group by fingerprint. Until then, model-quality claims are blocked.
+Packs are external JSON files loaded from `core.experience_pack_dir` or
+`-experience-pack-dir`. Public builds do not embed a production Pack. Pack
+activation requires review, a version, a SHA-256 in the private model manifest,
+and shadow evaluation against private labeled data.

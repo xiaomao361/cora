@@ -55,6 +55,7 @@ type Problem struct {
 	ID             int64     `json:"id"`
 	ProductLine    string    `json:"product_line"`
 	Fingerprint    string    `json:"fingerprint"`
+	RootCauseKey   string    `json:"root_cause_key"`
 	Service        string    `json:"service"`
 	Environment    string    `json:"environment"`
 	ExceptionType  string    `json:"exception_type"`
@@ -69,18 +70,20 @@ type Problem struct {
 }
 
 type TrendPoint struct {
-	ProductLine string    `json:"product_line"`
-	Service     string    `json:"service"`
-	Fingerprint string    `json:"fingerprint"`
-	Count       int64     `json:"count"`
-	WindowStart time.Time `json:"window_start"`
-	WindowEnd   time.Time `json:"window_end"`
+	ProductLine  string    `json:"product_line"`
+	Service      string    `json:"service"`
+	Fingerprint  string    `json:"fingerprint"`
+	RootCauseKey string    `json:"root_cause_key"`
+	Count        int64     `json:"count"`
+	WindowStart  time.Time `json:"window_start"`
+	WindowEnd    time.Time `json:"window_end"`
 }
 
 type NodeOccurrence struct {
 	ProductLine     string    `json:"product_line"`
 	Service         string    `json:"service"`
 	Fingerprint     string    `json:"fingerprint"`
+	RootCauseKey    string    `json:"root_cause_key"`
 	Node            string    `json:"node"`
 	DeploymentGroup string    `json:"deployment_group,omitempty"`
 	Environment     string    `json:"environment"`
@@ -93,6 +96,7 @@ type NodeTrendPoint struct {
 	ProductLine     string    `json:"product_line"`
 	Service         string    `json:"service"`
 	Fingerprint     string    `json:"fingerprint"`
+	RootCauseKey    string    `json:"root_cause_key"`
 	Node            string    `json:"node"`
 	DeploymentGroup string    `json:"deployment_group,omitempty"`
 	Count           int64     `json:"count"`
@@ -109,11 +113,19 @@ type nodeAggregate struct {
 }
 
 type aggregate struct {
-	Fingerprint string
-	Count       int64
-	First       Event
-	Latest      Event
-	Nodes       map[string]nodeAggregate
+	Fingerprint  string
+	RootCauseKey string
+	Count        int64
+	First        Event
+	Latest       Event
+	Nodes        map[string]nodeAggregate
+	Traces       map[string]traceAggregate
+}
+
+type traceAggregate struct {
+	Count     int64
+	FirstSeen time.Time
+	LastSeen  time.Time
 }
 
 var (
@@ -386,6 +398,154 @@ var schemaMigrations = []migration{
 		`CREATE INDEX problem_cases_problem_time
 			ON problem_cases(product_line, service, fingerprint, recorded_at DESC)`,
 	}},
+	{version: 6, statements: []string{
+		`ALTER TABLE cora_decisions ADD COLUMN root_cause_key TEXT NOT NULL DEFAULT ''`,
+		`CREATE INDEX cora_decisions_line_root_cause
+			ON cora_decisions(product_line, root_cause_key, decision, decided_at DESC)`,
+	}},
+	{version: 7, statements: []string{
+		`DROP INDEX IF EXISTS problems_line_state_last_seen`,
+		`DROP INDEX IF EXISTS problem_cases_problem_time`,
+		`DROP INDEX IF EXISTS cora_decisions_line_decision`,
+		`DROP INDEX IF EXISTS cora_decisions_line_root_cause`,
+		`DROP INDEX IF EXISTS node_occurrences_problem`,
+		`ALTER TABLE problem_cases RENAME TO problem_cases_v6`,
+		`ALTER TABLE problems RENAME TO problems_v6`,
+		`CREATE TABLE problems (
+			id INTEGER PRIMARY KEY,
+			product_line TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			root_cause_key TEXT NOT NULL,
+			service TEXT NOT NULL,
+			environment TEXT NOT NULL,
+			exception_type TEXT NOT NULL,
+			logger TEXT NOT NULL,
+			count INTEGER NOT NULL,
+			first_seen TEXT NOT NULL,
+			last_seen TEXT NOT NULL,
+			first_sample TEXT NOT NULL,
+			latest_sample TEXT NOT NULL,
+			state TEXT NOT NULL CHECK(state IN ('new', 'acknowledged', 'resolved', 'recurring')),
+			state_changed_at TEXT NOT NULL,
+			UNIQUE(product_line, service, fingerprint, root_cause_key)
+		)`,
+		`INSERT INTO problems
+			(id, product_line, fingerprint, root_cause_key, service, environment, exception_type,
+			 logger, count, first_seen, last_seen, first_sample, latest_sample, state, state_changed_at)
+		 SELECT p.id, p.product_line, p.fingerprint,
+		        COALESCE(NULLIF(d.root_cause_key, ''), 'legacy:' || p.fingerprint),
+		        p.service, p.environment, p.exception_type, p.logger, p.count, p.first_seen,
+		        p.last_seen, p.first_sample, p.latest_sample, p.state, p.state_changed_at
+		 FROM problems_v6 p LEFT JOIN cora_decisions d
+		   ON d.product_line=p.product_line AND d.service=p.service AND d.fingerprint=p.fingerprint`,
+		`CREATE INDEX problems_line_state_last_seen
+			ON problems(product_line, state, last_seen DESC)`,
+		`CREATE TABLE problem_cases (
+			id INTEGER PRIMARY KEY,
+			problem_id INTEGER NOT NULL,
+			product_line TEXT NOT NULL,
+			service TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			actor TEXT NOT NULL,
+			is_real_problem INTEGER NOT NULL CHECK(is_real_problem IN (0, 1)),
+			handled INTEGER NOT NULL CHECK(handled IN (0, 1)),
+			root_cause TEXT NOT NULL,
+			action TEXT NOT NULL,
+			prior_state TEXT NOT NULL,
+			resulting_state TEXT NOT NULL,
+			context_snapshot TEXT NOT NULL,
+			recorded_at TEXT NOT NULL,
+			FOREIGN KEY(problem_id) REFERENCES problems(id)
+		)`,
+		`INSERT INTO problem_cases SELECT * FROM problem_cases_v6`,
+		`CREATE INDEX problem_cases_problem_time
+			ON problem_cases(product_line, service, fingerprint, recorded_at DESC)`,
+		`DROP TABLE problem_cases_v6`,
+		`DROP TABLE problems_v6`,
+		`ALTER TABLE cora_decisions RENAME TO cora_decisions_v6`,
+		`CREATE TABLE cora_decisions (
+			id INTEGER PRIMARY KEY,
+			product_line TEXT NOT NULL,
+			service TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			root_cause_key TEXT NOT NULL,
+			decision TEXT NOT NULL CHECK(decision IN ('attention', 'observe', 'ignore')),
+			category TEXT NOT NULL,
+			rule_id TEXT NOT NULL,
+			reason TEXT NOT NULL,
+			source TEXT NOT NULL,
+			experience_version TEXT NOT NULL,
+			decided_at TEXT NOT NULL,
+			UNIQUE(product_line, service, fingerprint, root_cause_key)
+		)`,
+		`INSERT INTO cora_decisions
+			(id, product_line, service, fingerprint, root_cause_key, decision, category, rule_id,
+			 reason, source, experience_version, decided_at)
+		 SELECT id, product_line, service, fingerprint,
+		        COALESCE(NULLIF(root_cause_key, ''), 'legacy:' || fingerprint), decision, category,
+		        rule_id, reason, source, experience_version, decided_at FROM cora_decisions_v6`,
+		`DROP TABLE cora_decisions_v6`,
+		`CREATE INDEX cora_decisions_line_decision ON cora_decisions(product_line, decision)`,
+		`CREATE INDEX cora_decisions_line_root_cause
+			ON cora_decisions(product_line, root_cause_key, decision, decided_at DESC)`,
+		`ALTER TABLE trend_points ADD COLUMN root_cause_key TEXT NOT NULL DEFAULT ''`,
+		`UPDATE trend_points SET root_cause_key=COALESCE((SELECT p.root_cause_key FROM problems p
+		 WHERE p.product_line=trend_points.product_line AND p.service=trend_points.service
+		 AND p.fingerprint=trend_points.fingerprint LIMIT 1), 'legacy:' || fingerprint)`,
+		`ALTER TABLE node_occurrences RENAME TO node_occurrences_v6`,
+		`CREATE TABLE node_occurrences (
+			id INTEGER PRIMARY KEY,
+			product_line TEXT NOT NULL,
+			service TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			root_cause_key TEXT NOT NULL,
+			node TEXT NOT NULL,
+			deployment_group TEXT NOT NULL,
+			environment TEXT NOT NULL,
+			count INTEGER NOT NULL,
+			first_seen TEXT NOT NULL,
+			last_seen TEXT NOT NULL,
+			UNIQUE(product_line, service, fingerprint, root_cause_key, node)
+		)`,
+		`INSERT INTO node_occurrences
+			(id, product_line, service, fingerprint, root_cause_key, node, deployment_group,
+			 environment, count, first_seen, last_seen)
+		 SELECT n.id, n.product_line, n.service, n.fingerprint,
+		        COALESCE((SELECT p.root_cause_key FROM problems p WHERE p.product_line=n.product_line
+		        AND p.service=n.service AND p.fingerprint=n.fingerprint LIMIT 1), 'legacy:' || n.fingerprint),
+		        n.node, n.deployment_group, n.environment, n.count, n.first_seen, n.last_seen
+		 FROM node_occurrences_v6 n`,
+		`DROP TABLE node_occurrences_v6`,
+		`CREATE INDEX node_occurrences_problem
+			ON node_occurrences(product_line, service, fingerprint, root_cause_key, count DESC)`,
+		`ALTER TABLE node_trend_points ADD COLUMN root_cause_key TEXT NOT NULL DEFAULT ''`,
+		`UPDATE node_trend_points SET root_cause_key=COALESCE((SELECT p.root_cause_key FROM problems p
+		 WHERE p.product_line=node_trend_points.product_line AND p.service=node_trend_points.service
+		 AND p.fingerprint=node_trend_points.fingerprint LIMIT 1), 'legacy:' || fingerprint)`,
+	}},
+	{version: 8, statements: []string{
+		`CREATE TABLE trace_problem_occurrences (
+			id INTEGER PRIMARY KEY,
+			product_line TEXT NOT NULL,
+			trace_id TEXT NOT NULL,
+			problem_id INTEGER NOT NULL,
+			service TEXT NOT NULL,
+			fingerprint TEXT NOT NULL,
+			root_cause_key TEXT NOT NULL,
+			decision TEXT NOT NULL CHECK(decision IN ('attention', 'observe', 'ignore')),
+			rule_id TEXT NOT NULL,
+			trace_role TEXT NOT NULL CHECK(trace_role IN ('unknown', 'wrapper', 'cause')),
+			count INTEGER NOT NULL,
+			first_seen TEXT NOT NULL,
+			last_seen TEXT NOT NULL,
+			UNIQUE(product_line, trace_id, problem_id),
+			FOREIGN KEY(problem_id) REFERENCES problems(id)
+		)`,
+		`CREATE INDEX trace_problem_occurrences_trace
+			ON trace_problem_occurrences(product_line, trace_id, trace_role, last_seen DESC)`,
+		`CREATE INDEX trace_problem_occurrences_problem
+			ON trace_problem_occurrences(problem_id, trace_role, last_seen DESC)`,
+	}},
 }
 
 func migrate(db *sql.DB, migrations []migration) error {
@@ -527,13 +687,27 @@ func (s *Store) Record(ctx context.Context, event Event) error {
 		return err
 	}
 	fingerprint := Fingerprint(event)
+	rootCauseKey := s.rootCauseKey(ctx, event, fingerprint)
 	return s.Flush(ctx, time.Now().UTC(), map[string]aggregate{
-		aggregateKey(event, fingerprint): newAggregate(event, fingerprint),
+		aggregateKey(event, fingerprint, rootCauseKey): newAggregate(event, fingerprint, rootCauseKey),
 	})
 }
 
-func aggregateKey(event Event, fingerprint string) string {
-	return event.ProductLine + "\x00" + event.Service + "\x00" + fingerprint
+func (s *Store) rootCauseKey(ctx context.Context, event Event, fingerprint string) string {
+	if s == nil || s.cora == nil {
+		return derivedRootCauseKey(event, fingerprint)
+	}
+	if classifier, ok := s.cora.(RootCauseClassifier); ok {
+		key, err := classifier.ClassifyRootCause(ctx, DecisionRequest{Event: event, Fingerprint: fingerprint, FirstOccurrence: true})
+		if err == nil && key != "" {
+			return key
+		}
+	}
+	return derivedRootCauseKey(event, fingerprint)
+}
+
+func aggregateKey(event Event, fingerprint, rootCauseKey string) string {
+	return event.ProductLine + "\x00" + event.Service + "\x00" + fingerprint + "\x00" + rootCauseKey
 }
 
 func nodeIdentity(event Event) (string, string) {
@@ -551,14 +725,23 @@ func nodeIdentity(event Event) (string, string) {
 	return node, group
 }
 
-func newAggregate(event Event, fingerprint string) aggregate {
+func newAggregate(event Event, fingerprint, rootCauseKey string) aggregate {
 	node, group := nodeIdentity(event)
 	return aggregate{
-		Fingerprint: fingerprint, Count: 1, First: event, Latest: event,
+		Fingerprint: fingerprint, RootCauseKey: rootCauseKey, Count: 1, First: event, Latest: event,
 		Nodes: map[string]nodeAggregate{node: {
 			Node: node, DeploymentGroup: group, Count: 1, First: event, Latest: event,
 		}},
+		Traces: newTraceAggregates(event),
 	}
+}
+
+func newTraceAggregates(event Event) map[string]traceAggregate {
+	traces := map[string]traceAggregate{}
+	if event.TraceID != "" {
+		traces[event.TraceID] = traceAggregate{Count: 1, FirstSeen: event.OccurredAt, LastSeen: event.OccurredAt}
+	}
+	return traces
 }
 
 func prepareEvent(event Event, now time.Time) (Event, error) {
@@ -586,8 +769,8 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 		var storedFirstSeen, storedLastSeen, storedFirstSample, storedLatestSample, storedState, storedStateChangedAt string
 		firstOccurrence := false
 		err := tx.QueryRowContext(ctx, `SELECT count, first_seen, last_seen, first_sample, latest_sample, state, state_changed_at
-			FROM problems WHERE product_line = ? AND service = ? AND fingerprint = ?`,
-			item.First.ProductLine, item.First.Service, item.Fingerprint).
+			FROM problems WHERE product_line = ? AND service = ? AND fingerprint = ? AND root_cause_key = ?`,
+			item.First.ProductLine, item.First.Service, item.Fingerprint, item.RootCauseKey).
 			Scan(&previousCount, &storedFirstSeen, &storedLastSeen, &storedFirstSample, &storedLatestSample, &storedState, &storedStateChangedAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			firstOccurrence = true
@@ -635,21 +818,24 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 		if err != nil {
 			decision = CoraDecision{
 				Decision: DecisionObserve, Category: "core-unavailable",
-				RuleID: "cora.default.core-unavailable",
-				Reason: "Cora could not decide; keep visible for review",
-				Source: "framework_default", DecidedAt: windowEnd,
+				RootCauseKey: derivedRootCauseKey(decisionEvent, item.Fingerprint),
+				RuleID:       "cora.default.core-unavailable",
+				Reason:       "Cora could not decide; keep visible for review",
+				Source:       "framework_default", DecidedAt: windowEnd,
 			}
 		} else if !validDecision(decision.Decision) {
 			decision = CoraDecision{
 				Decision: DecisionObserve, Category: "invalid-core-decision",
-				RuleID: "cora.default.invalid-core-decision",
-				Reason: "Cora returned an invalid decision; keep visible for review",
-				Source: "framework_default", DecidedAt: windowEnd,
+				RootCauseKey: derivedRootCauseKey(decisionEvent, item.Fingerprint),
+				RuleID:       "cora.default.invalid-core-decision",
+				Reason:       "Cora returned an invalid decision; keep visible for review",
+				Source:       "framework_default", DecidedAt: windowEnd,
 			}
 		}
 		if decision.DecidedAt.IsZero() {
 			decision.DecidedAt = windowEnd
 		}
+		decision.RootCauseKey = item.RootCauseKey
 		state := ProblemStateNew
 		stateChangedAt := firstSeen
 		if !firstOccurrence {
@@ -665,10 +851,10 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 		}
 		_, err = tx.ExecContext(ctx, `
 		INSERT INTO problems (
-			product_line, fingerprint, service, environment, exception_type, logger,
+			product_line, fingerprint, root_cause_key, service, environment, exception_type, logger,
 			count, first_seen, last_seen, first_sample, latest_sample, state, state_changed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(product_line, service, fingerprint) DO UPDATE SET
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(product_line, service, fingerprint, root_cause_key) DO UPDATE SET
 			count = count + excluded.count,
 			first_seen = excluded.first_seen,
 			first_sample = excluded.first_sample,
@@ -676,7 +862,7 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 			latest_sample = excluded.latest_sample,
 			state = excluded.state,
 			state_changed_at = excluded.state_changed_at`,
-			item.First.ProductLine, item.Fingerprint, item.First.Service, item.First.Environment,
+			item.First.ProductLine, item.Fingerprint, item.RootCauseKey, item.First.Service, item.First.Environment,
 			item.First.ExceptionType, item.First.Logger, item.Count,
 			firstSeen.Format(time.RFC3339Nano), lastSeen.Format(time.RFC3339Nano),
 			string(firstSample), string(latestSample), state, stateChangedAt.Format(time.RFC3339Nano))
@@ -685,48 +871,75 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO cora_decisions
 			(product_line, service, fingerprint, decision, category, rule_id, reason, source,
-			 experience_version, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT(product_line, service, fingerprint) DO UPDATE SET
+			 experience_version, decided_at, root_cause_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT(product_line, service, fingerprint, root_cause_key) DO UPDATE SET
 				decision = excluded.decision,
 				category = excluded.category,
 				rule_id = excluded.rule_id,
 				reason = excluded.reason,
 				source = excluded.source,
 				experience_version = excluded.experience_version,
-				decided_at = excluded.decided_at`,
+				decided_at = excluded.decided_at,
+				root_cause_key = excluded.root_cause_key`,
 			item.First.ProductLine, item.First.Service, item.Fingerprint, decision.Decision, decision.Category,
 			decision.RuleID, decision.Reason, decision.Source, decision.ExperienceVersion,
-			decision.DecidedAt.Format(time.RFC3339Nano))
+			decision.DecidedAt.Format(time.RFC3339Nano), decision.RootCauseKey)
 		if err != nil {
 			return err
 		}
+		var problemID int64
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM problems
+			WHERE product_line = ? AND service = ? AND fingerprint = ? AND root_cause_key = ?`,
+			item.First.ProductLine, item.First.Service, item.Fingerprint, item.RootCauseKey).Scan(&problemID); err != nil {
+			return err
+		}
+		traceRole := normalizedTraceRole(decision.TraceRole)
+		for traceID, trace := range item.Traces {
+			_, err = tx.ExecContext(ctx, `INSERT INTO trace_problem_occurrences
+				(product_line, trace_id, problem_id, service, fingerprint, root_cause_key,
+				 decision, rule_id, trace_role, count, first_seen, last_seen)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(product_line, trace_id, problem_id) DO UPDATE SET
+					decision = excluded.decision,
+					rule_id = excluded.rule_id,
+					trace_role = excluded.trace_role,
+					count = count + excluded.count,
+					first_seen = CASE WHEN excluded.first_seen < first_seen THEN excluded.first_seen ELSE first_seen END,
+					last_seen = CASE WHEN excluded.last_seen > last_seen THEN excluded.last_seen ELSE last_seen END`,
+				item.First.ProductLine, traceID, problemID, item.First.Service, item.Fingerprint,
+				item.RootCauseKey, decision.Decision, decision.RuleID, traceRole, trace.Count,
+				trace.FirstSeen.UTC().Format(time.RFC3339Nano), trace.LastSeen.UTC().Format(time.RFC3339Nano))
+			if err != nil {
+				return err
+			}
+		}
 		_, err = tx.ExecContext(ctx, `INSERT INTO trend_points
-			(product_line, service, fingerprint, count, window_start, window_end) VALUES (?, ?, ?, ?, ?, ?)`,
-			item.First.ProductLine, item.First.Service, item.Fingerprint, item.Count,
+			(product_line, service, fingerprint, root_cause_key, count, window_start, window_end) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			item.First.ProductLine, item.First.Service, item.Fingerprint, item.RootCauseKey, item.Count,
 			item.First.OccurredAt.Format(time.RFC3339Nano), windowEnd.Format(time.RFC3339Nano))
 		if err != nil {
 			return err
 		}
 		for _, node := range item.Nodes {
 			_, err = tx.ExecContext(ctx, `INSERT INTO node_occurrences
-				(product_line, service, fingerprint, node, deployment_group, environment,
-				 count, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-				ON CONFLICT(product_line, service, fingerprint, node) DO UPDATE SET
+				(product_line, service, fingerprint, root_cause_key, node, deployment_group, environment,
+				 count, first_seen, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT(product_line, service, fingerprint, root_cause_key, node) DO UPDATE SET
 					count = count + excluded.count,
 					first_seen = CASE WHEN excluded.first_seen < first_seen THEN excluded.first_seen ELSE first_seen END,
 					last_seen = CASE WHEN excluded.last_seen > last_seen THEN excluded.last_seen ELSE last_seen END,
 					deployment_group = CASE WHEN excluded.last_seen > last_seen THEN excluded.deployment_group ELSE deployment_group END,
 					environment = CASE WHEN excluded.last_seen > last_seen THEN excluded.environment ELSE environment END`,
-				item.First.ProductLine, item.First.Service, item.Fingerprint, node.Node,
+				item.First.ProductLine, item.First.Service, item.Fingerprint, item.RootCauseKey, node.Node,
 				node.DeploymentGroup, node.Latest.Environment, node.Count,
 				node.First.OccurredAt.UTC().Format(time.RFC3339Nano), node.Latest.OccurredAt.UTC().Format(time.RFC3339Nano))
 			if err != nil {
 				return err
 			}
 			_, err = tx.ExecContext(ctx, `INSERT INTO node_trend_points
-				(product_line, service, fingerprint, node, deployment_group, count,
-				 window_start, window_end) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-				item.First.ProductLine, item.First.Service, item.Fingerprint, node.Node,
+				(product_line, service, fingerprint, root_cause_key, node, deployment_group, count,
+				 window_start, window_end) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				item.First.ProductLine, item.First.Service, item.Fingerprint, item.RootCauseKey, node.Node,
 				node.DeploymentGroup, node.Count, node.First.OccurredAt.UTC().Format(time.RFC3339Nano),
 				windowEnd.Format(time.RFC3339Nano))
 			if err != nil {
@@ -739,7 +952,7 @@ func (s *Store) Flush(ctx context.Context, windowEnd time.Time, aggregates map[s
 
 func (s *Store) Problems(ctx context.Context, productLine string) ([]Problem, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, product_line, fingerprint, service, environment, exception_type,
+		SELECT id, product_line, fingerprint, root_cause_key, service, environment, exception_type,
 		       logger, count, first_seen, last_seen, first_sample, latest_sample,
 		       state, state_changed_at
 		FROM problems WHERE product_line = ? ORDER BY last_seen DESC`, productLine)
@@ -751,7 +964,7 @@ func (s *Store) Problems(ctx context.Context, productLine string) ([]Problem, er
 	for rows.Next() {
 		var problem Problem
 		var firstSeen, lastSeen, stateChangedAt string
-		if err := rows.Scan(&problem.ID, &problem.ProductLine, &problem.Fingerprint,
+		if err := rows.Scan(&problem.ID, &problem.ProductLine, &problem.Fingerprint, &problem.RootCauseKey,
 			&problem.Service, &problem.Environment, &problem.ExceptionType, &problem.Logger,
 			&problem.Count, &firstSeen, &lastSeen, &problem.FirstSample, &problem.LatestSample,
 			&problem.State, &stateChangedAt); err != nil {
@@ -766,9 +979,19 @@ func (s *Store) Problems(ctx context.Context, productLine string) ([]Problem, er
 }
 
 func (s *Store) TrendPoints(ctx context.Context, productLine, service, fingerprint string) ([]TrendPoint, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT product_line, service, fingerprint, count, window_start, window_end
-		FROM trend_points WHERE product_line = ? AND service = ? AND fingerprint = ? ORDER BY window_end`,
-		productLine, service, fingerprint)
+	return s.trendPointsForCause(ctx, productLine, service, fingerprint, "")
+}
+
+func (s *Store) trendPointsForCause(ctx context.Context, productLine, service, fingerprint, rootCauseKey string) ([]TrendPoint, error) {
+	query := `SELECT product_line, service, fingerprint, root_cause_key, count, window_start, window_end
+		FROM trend_points WHERE product_line = ? AND service = ? AND fingerprint = ?`
+	args := []any{productLine, service, fingerprint}
+	if rootCauseKey != "" {
+		query += ` AND root_cause_key = ?`
+		args = append(args, rootCauseKey)
+	}
+	query += ` ORDER BY window_end`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -777,7 +1000,7 @@ func (s *Store) TrendPoints(ctx context.Context, productLine, service, fingerpri
 	for rows.Next() {
 		var point TrendPoint
 		var start, end string
-		if err := rows.Scan(&point.ProductLine, &point.Service, &point.Fingerprint, &point.Count, &start, &end); err != nil {
+		if err := rows.Scan(&point.ProductLine, &point.Service, &point.Fingerprint, &point.RootCauseKey, &point.Count, &start, &end); err != nil {
 			return nil, err
 		}
 		point.WindowStart, _ = time.Parse(time.RFC3339Nano, start)
@@ -788,11 +1011,21 @@ func (s *Store) TrendPoints(ctx context.Context, productLine, service, fingerpri
 }
 
 func (s *Store) NodeOccurrences(ctx context.Context, productLine, service, fingerprint string) ([]NodeOccurrence, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT product_line, service, fingerprint, node,
+	return s.nodeOccurrencesForCause(ctx, productLine, service, fingerprint, "")
+}
+
+func (s *Store) nodeOccurrencesForCause(ctx context.Context, productLine, service, fingerprint, rootCauseKey string) ([]NodeOccurrence, error) {
+	query := `SELECT product_line, service, fingerprint, root_cause_key, node,
 		deployment_group, environment, count, first_seen, last_seen
 		FROM node_occurrences
-		WHERE product_line = ? AND service = ? AND fingerprint = ?
-		ORDER BY count DESC, node`, productLine, service, fingerprint)
+		WHERE product_line = ? AND service = ? AND fingerprint = ?`
+	args := []any{productLine, service, fingerprint}
+	if rootCauseKey != "" {
+		query += ` AND root_cause_key = ?`
+		args = append(args, rootCauseKey)
+	}
+	query += ` ORDER BY count DESC, node`
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -801,7 +1034,7 @@ func (s *Store) NodeOccurrences(ctx context.Context, productLine, service, finge
 	for rows.Next() {
 		var item NodeOccurrence
 		var firstSeen, lastSeen string
-		if err := rows.Scan(&item.ProductLine, &item.Service, &item.Fingerprint, &item.Node,
+		if err := rows.Scan(&item.ProductLine, &item.Service, &item.Fingerprint, &item.RootCauseKey, &item.Node,
 			&item.DeploymentGroup, &item.Environment, &item.Count, &firstSeen, &lastSeen); err != nil {
 			return nil, err
 		}
@@ -813,9 +1046,17 @@ func (s *Store) NodeOccurrences(ctx context.Context, productLine, service, finge
 }
 
 func (s *Store) NodeTrendPoints(ctx context.Context, productLine, service, fingerprint, node string) ([]NodeTrendPoint, error) {
-	query := `SELECT product_line, service, fingerprint, node, deployment_group, count, window_start, window_end
+	return s.nodeTrendPointsForCause(ctx, productLine, service, fingerprint, "", node)
+}
+
+func (s *Store) nodeTrendPointsForCause(ctx context.Context, productLine, service, fingerprint, rootCauseKey, node string) ([]NodeTrendPoint, error) {
+	query := `SELECT product_line, service, fingerprint, root_cause_key, node, deployment_group, count, window_start, window_end
 		FROM node_trend_points WHERE product_line = ? AND service = ? AND fingerprint = ?`
 	args := []any{productLine, service, fingerprint}
+	if rootCauseKey != "" {
+		query += ` AND root_cause_key = ?`
+		args = append(args, rootCauseKey)
+	}
 	if node != "" {
 		query += ` AND node = ?`
 		args = append(args, node)
@@ -830,7 +1071,7 @@ func (s *Store) NodeTrendPoints(ctx context.Context, productLine, service, finge
 	for rows.Next() {
 		var item NodeTrendPoint
 		var start, end string
-		if err := rows.Scan(&item.ProductLine, &item.Service, &item.Fingerprint, &item.Node,
+		if err := rows.Scan(&item.ProductLine, &item.Service, &item.Fingerprint, &item.RootCauseKey, &item.Node,
 			&item.DeploymentGroup, &item.Count, &start, &end); err != nil {
 			return nil, err
 		}
@@ -845,11 +1086,11 @@ func (s *Store) Attention(ctx context.Context, productLine string) ([]AttentionI
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.product_line, p.fingerprint, p.service, p.environment,
 		       p.exception_type, p.logger, p.count, p.last_seen, p.state, p.state_changed_at,
-		       d.decision, d.category, d.rule_id, d.reason, d.source,
+		       d.decision, d.root_cause_key, d.category, d.rule_id, d.reason, d.source,
 		       d.experience_version, d.decided_at
 		FROM problems p
 		JOIN cora_decisions d ON d.product_line = p.product_line AND d.service = p.service
-		 AND d.fingerprint = p.fingerprint
+		 AND d.fingerprint = p.fingerprint AND d.root_cause_key = p.root_cause_key
 		WHERE p.product_line = ? AND d.decision != 'ignore'
 		ORDER BY CASE d.decision WHEN 'attention' THEN 0 ELSE 1 END, p.last_seen DESC`, productLine)
 	if err != nil {
@@ -862,7 +1103,8 @@ func (s *Store) Attention(ctx context.Context, productLine string) ([]AttentionI
 		var lastSeen, stateChangedAt, decidedAt string
 		if err := rows.Scan(&item.ProblemID, &item.ProductLine, &item.Fingerprint,
 			&item.Service, &item.Environment, &item.ExceptionType, &item.Logger,
-			&item.Count, &lastSeen, &item.State, &stateChangedAt, &item.Decision, &item.Category, &item.RuleID,
+			&item.Count, &lastSeen, &item.State, &stateChangedAt, &item.Decision,
+			&item.RootCauseKey, &item.Category, &item.RuleID,
 			&item.Reason, &item.Source, &item.ExperienceVersion, &decidedAt); err != nil {
 			return nil, err
 		}
@@ -910,7 +1152,8 @@ func (a *Aggregator) Add(event Event) error {
 		return err
 	}
 	fingerprint := Fingerprint(event)
-	key := aggregateKey(event, fingerprint)
+	rootCauseKey := a.store.rootCauseKey(context.Background(), event, fingerprint)
+	key := aggregateKey(event, fingerprint, rootCauseKey)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	item, exists := a.pending[key]
@@ -919,7 +1162,7 @@ func (a *Aggregator) Add(event Event) error {
 		return nil
 	}
 	if !exists {
-		item = newAggregate(event, fingerprint)
+		item = newAggregate(event, fingerprint, rootCauseKey)
 	} else {
 		if event.OccurredAt.Before(item.First.OccurredAt) {
 			item.First = event
@@ -942,6 +1185,17 @@ func (a *Aggregator) Add(event Event) error {
 		}
 		nodeItem.Count++
 		item.Nodes[node] = nodeItem
+		if event.TraceID != "" {
+			trace := item.Traces[event.TraceID]
+			if trace.Count == 0 || event.OccurredAt.Before(trace.FirstSeen) {
+				trace.FirstSeen = event.OccurredAt
+			}
+			if trace.Count == 0 || event.OccurredAt.After(trace.LastSeen) {
+				trace.LastSeen = event.OccurredAt
+			}
+			trace.Count++
+			item.Traces[event.TraceID] = trace
+		}
 	}
 	if exists {
 		item.Count++
@@ -984,6 +1238,17 @@ func (a *Aggregator) Flush(ctx context.Context) error {
 					} else {
 						item.Nodes[node] = currentNode
 					}
+				}
+				for traceID, currentTrace := range current.Traces {
+					pendingTrace := item.Traces[traceID]
+					if pendingTrace.Count == 0 || currentTrace.FirstSeen.Before(pendingTrace.FirstSeen) {
+						pendingTrace.FirstSeen = currentTrace.FirstSeen
+					}
+					if pendingTrace.Count == 0 || currentTrace.LastSeen.After(pendingTrace.LastSeen) {
+						pendingTrace.LastSeen = currentTrace.LastSeen
+					}
+					pendingTrace.Count += currentTrace.Count
+					item.Traces[traceID] = pendingTrace
 				}
 			}
 			a.pending[key] = item

@@ -103,6 +103,7 @@ type ProblemDecision struct {
 	ProductLine              string   `json:"product_line"`
 	Service                  string   `json:"service"`
 	Fingerprint              string   `json:"fingerprint"`
+	RootCauseKey             string   `json:"root_cause_key"`
 	State                    string   `json:"state"`
 	Decision                 string   `json:"decision"`
 	OccurrenceCount          int64    `json:"occurrence_count"`

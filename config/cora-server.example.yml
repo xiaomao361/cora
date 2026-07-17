@@ -1,12 +1,17 @@
 server:
-  http_listen_address: 10.0.0.10
+  # Keep the Server private by default. Use a reverse proxy for remote access.
+  http_listen_address: 127.0.0.1
   http_listen_port: 8080
 
 storage:
-  path: ./cora.db
+  path: /var/lib/cora/cora.db
+
+# Optional. The safe default is observe-only; uncomment for a private Pack.
+# core:
+#   experience_pack_dir: /etc/cora/experience-packs
 
 auth:
-  bearer_token_file: ./auth.token
+  bearer_token_file: /etc/cora/auth.token
   allow_unauthenticated: false
 
 aggregation:

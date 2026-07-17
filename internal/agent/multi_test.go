@@ -42,10 +42,10 @@ func TestRunMultiTailsTwoFilesWithSharedPositions(t *testing.T) {
 		}
 	}
 	first := testConfig(firstPath, positions, server.URL)
-	first.Service = "gb-auth"
+	first.Service = "identity"
 	first.Labels = map[string]string{"server": "backup", "job": "auth"}
 	second := testConfig(secondPath, positions, server.URL)
-	second.Service = "gb-order"
+	second.Service = "checkout"
 	second.Labels = map[string]string{"server": "backup", "job": "order"}
 	probe, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -112,7 +112,7 @@ func TestRunMultiTailsTwoFilesWithSharedPositions(t *testing.T) {
 			t.Fatal("multi-target event not delivered")
 		}
 	}
-	if !services["gb-auth"] || !services["gb-order"] {
+	if !services["identity"] || !services["checkout"] {
 		t.Fatalf("services=%v", services)
 	}
 	waitFor(t, func() bool {

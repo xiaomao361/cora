@@ -246,7 +246,7 @@ func TestAgentServerPersistsRedactedRepresentativeBreadcrumbs(t *testing.T) {
 	if err := aggregator.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	problems, err := store.Problems(context.Background(), "gbjk-zhifu")
+	problems, err := store.Problems(context.Background(), "payments")
 	if err != nil || len(problems) != 1 {
 		t.Fatalf("problems=%v err=%v", problems, err)
 	}
@@ -322,7 +322,7 @@ func TestAgentReopensRotatedFile(t *testing.T) {
 func testConfig(logPath, positionsPath, endpoint string) Config {
 	return Config{
 		Path: logPath, PositionsPath: positionsPath, Endpoint: endpoint,
-		ProductLine: "gbjk-zhifu", Service: "gbjk-order", Environment: "test",
+		ProductLine: "payments", Service: "checkout", Environment: "test",
 		Timezone: "Asia/Shanghai", StartAtBeginning: true, BatchSize: 10,
 		MaxEventBytes: 256 << 10, MaxBatchBytes: 1536 << 10,
 		BatchWait: 30 * time.Millisecond, PollInterval: 10 * time.Millisecond,

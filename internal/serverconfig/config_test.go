@@ -11,10 +11,12 @@ import (
 func TestLoadKeepsPathsRelativeToWorkingDirectory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cora.yml")
 	data := `server:
-  http_listen_address: 10.0.0.10
+  http_listen_address: 192.0.2.10
   http_listen_port: 8181
 storage:
   path: ./cora.db
+core:
+  experience_pack_dir: ./experience-packs
 auth:
   bearer_token_file: ./auth.token
 aggregation:
@@ -28,7 +30,8 @@ aggregation:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.Address() != "10.0.0.10:8181" || runtime.DatabasePath != "./cora.db" ||
+	if runtime.Address() != "192.0.2.10:8181" || runtime.DatabasePath != "./cora.db" ||
+		runtime.ExperiencePackDir != "./experience-packs" ||
 		runtime.BearerTokenFile != "./auth.token" || runtime.FlushInterval != 2*time.Second ||
 		runtime.MaxActive != 123 {
 		t.Fatalf("runtime=%+v", runtime)
@@ -52,5 +55,17 @@ func TestLoadRejectsUnknownFieldsAndMissingAuthentication(t *testing.T) {
 				t.Fatalf("error=%v, want %q", err, test.want)
 			}
 		})
+	}
+}
+
+func TestCheckedInServerExampleParses(t *testing.T) {
+	runtime, err := Load("../../config/cora-server.example.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.Address() != "127.0.0.1:8080" || runtime.DatabasePath != "/var/lib/cora/cora.db" ||
+		runtime.ExperiencePackDir != "" ||
+		runtime.BearerTokenFile != "/etc/cora/auth.token" {
+		t.Fatalf("runtime=%+v", runtime)
 	}
 }

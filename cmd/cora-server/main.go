@@ -20,6 +20,7 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8080", "explicit HTTP listen address")
 	dbPath := flag.String("db", "cora.db", "SQLite database path")
+	experiencePackDir := flag.String("experience-pack-dir", "", "directory containing private product-line experience packs")
 	authTokenFile := flag.String("auth-token-file", "", "file containing the required bearer token")
 	allowUnauthenticated := flag.Bool("allow-unauthenticated", false, "allow local development without authentication")
 	flushInterval := flag.Duration("flush-interval", 10*time.Second, "aggregation flush interval")
@@ -36,7 +37,7 @@ func main() {
 	}
 	if *configFile != "" {
 		configuredFlags := map[string]bool{
-			"addr": true, "db": true, "auth-token-file": true,
+			"addr": true, "db": true, "experience-pack-dir": true, "auth-token-file": true,
 			"allow-unauthenticated": true, "flush-interval": true, "max-active": true,
 		}
 		conflict := ""
@@ -54,6 +55,7 @@ func main() {
 		}
 		*addr = runtime.Address()
 		*dbPath = runtime.DatabasePath
+		*experiencePackDir = runtime.ExperiencePackDir
 		*authTokenFile = runtime.BearerTokenFile
 		*allowUnauthenticated = runtime.AllowUnauthenticated
 		*flushInterval = runtime.FlushInterval
@@ -62,6 +64,9 @@ func main() {
 		log.Fatal("check-config requires config.file")
 	}
 	if *checkConfig {
+		if _, err := cora.LoadExperiencePacks(*experiencePackDir); err != nil {
+			log.Fatal(err)
+		}
 		if *authTokenFile != "" {
 			if _, err := auth.LoadBearerTokenFile(*authTokenFile); err != nil {
 				log.Fatal(err)
@@ -69,7 +74,7 @@ func main() {
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
 			"status": "ok", "config_file": *configFile, "address": *addr,
-			"database": *dbPath, "build": buildinfo.Current(),
+			"database": *dbPath, "experience_pack_dir": *experiencePackDir, "build": buildinfo.Current(),
 		})
 		return
 	}
@@ -105,7 +110,11 @@ func main() {
 		}
 	}
 
-	store, err := cora.OpenStore(*dbPath)
+	core, err := cora.LoadExperiencePacks(*experiencePackDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	store, err := cora.OpenStoreWithCora(*dbPath, core)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -115,8 +124,8 @@ func main() {
 	defer stop()
 	aggregator := cora.NewAggregator(store, *maxActive)
 	build := buildinfo.Current()
-	log.Printf("Cora Server starting version=%s commit=%s database=%q flush_interval=%s max_active=%d auth_enabled=%t",
-		build.Version, build.Commit, *dbPath, *flushInterval, *maxActive, bearerToken != "")
+	log.Printf("Cora Server starting version=%s commit=%s database=%q flush_interval=%s max_active=%d auth_enabled=%t experience_pack_configured=%t",
+		build.Version, build.Commit, *dbPath, *flushInterval, *maxActive, bearerToken != "", *experiencePackDir != "")
 	go aggregator.Run(ctx, *flushInterval)
 	server := &http.Server{
 		Addr: *addr, Handler: cora.HandlerWithOptions(store,

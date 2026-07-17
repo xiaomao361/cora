@@ -2,13 +2,15 @@ package cora
 
 import (
 	"context"
-	"embed"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -16,6 +18,9 @@ const (
 	DecisionAttention = "attention"
 	DecisionObserve   = "observe"
 	DecisionIgnore    = "ignore"
+	TraceRoleUnknown  = "unknown"
+	TraceRoleWrapper  = "wrapper"
+	TraceRoleCause    = "cause"
 )
 
 // DecisionRequest is the stable Cora Server/Core boundary. A future external
@@ -29,11 +34,13 @@ type DecisionRequest struct {
 
 type CoraDecision struct {
 	Decision          string    `json:"decision"`
+	RootCauseKey      string    `json:"root_cause_key"`
 	Category          string    `json:"category"`
 	RuleID            string    `json:"rule_id"`
 	Reason            string    `json:"reason"`
 	Source            string    `json:"source"`
 	ExperienceVersion string    `json:"experience_version,omitempty"`
+	TraceRole         string    `json:"trace_role,omitempty"`
 	DecidedAt         time.Time `json:"decided_at"`
 }
 
@@ -50,6 +57,7 @@ type AttentionItem struct {
 	State                string                    `json:"state"`
 	StateChangedAt       time.Time                 `json:"state_changed_at"`
 	Decision             string                    `json:"decision"`
+	RootCauseKey         string                    `json:"root_cause_key"`
 	Category             string                    `json:"category"`
 	RuleID               string                    `json:"rule_id"`
 	Reason               string                    `json:"reason"`
@@ -62,6 +70,28 @@ type AttentionItem struct {
 	IncidentServices     []string                  `json:"incident_services,omitempty"`
 	SharedTraceIDs       []string                  `json:"shared_trace_ids,omitempty"`
 	RelatedProblems      []AttentionRelatedProblem `json:"related_problems,omitempty"`
+	TraceProjectionMode  string                    `json:"trace_projection_mode,omitempty"`
+	TraceProjection      *TraceProjectionSummary   `json:"trace_projection,omitempty"`
+}
+
+type TraceProjectionSummary struct {
+	Projected   int               `json:"projected"`
+	Ambiguous   int               `json:"ambiguous"`
+	Unresolved  int               `json:"unresolved"`
+	Projections []TraceProjection `json:"projections,omitempty"`
+}
+
+type TraceProjection struct {
+	TraceID             string    `json:"trace_id"`
+	Status              string    `json:"status"`
+	WrapperProblemIDs   []int64   `json:"wrapper_problem_ids"`
+	ProjectedDecision   string    `json:"projected_decision,omitempty"`
+	ProjectedRootCause  string    `json:"projected_root_cause_key,omitempty"`
+	CauseProblemIDs     []int64   `json:"cause_problem_ids,omitempty"`
+	CauseServices       []string  `json:"cause_services,omitempty"`
+	CauseRuleIDs        []string  `json:"cause_rule_ids,omitempty"`
+	CandidateRootCauses []string  `json:"candidate_root_cause_keys,omitempty"`
+	LastSeen            time.Time `json:"last_seen"`
 }
 
 type AttentionRelatedProblem struct {
@@ -71,6 +101,8 @@ type AttentionRelatedProblem struct {
 	State          string    `json:"state"`
 	Decision       string    `json:"decision"`
 	Category       string    `json:"category"`
+	RootCauseKey   string    `json:"root_cause_key"`
+	RelationKinds  []string  `json:"relation_kinds"`
 	Count          int64     `json:"count"`
 	LastSeen       time.Time `json:"last_seen"`
 	SharedTraceIDs []string  `json:"shared_trace_ids"`
@@ -78,6 +110,13 @@ type AttentionRelatedProblem struct {
 
 type Cora interface {
 	Decide(context.Context, DecisionRequest) (CoraDecision, error)
+}
+
+// RootCauseClassifier is an optional fast path used before window aggregation.
+// Implementations must return a deterministic key independent of service, node,
+// occurrence count, and wall-clock time.
+type RootCauseClassifier interface {
+	ClassifyRootCause(context.Context, DecisionRequest) (string, error)
 }
 
 type experiencePack struct {
@@ -90,11 +129,13 @@ type experiencePack struct {
 }
 
 type experienceRule struct {
-	ID       string      `json:"id"`
-	Decision string      `json:"decision"`
-	Category string      `json:"category"`
-	Reason   string      `json:"reason"`
-	Match    ruleMatcher `json:"match"`
+	ID           string      `json:"id"`
+	Decision     string      `json:"decision"`
+	RootCauseKey string      `json:"root_cause_key,omitempty"`
+	Category     string      `json:"category"`
+	Reason       string      `json:"reason"`
+	TraceRole    string      `json:"trace_role,omitempty"`
+	Match        ruleMatcher `json:"match"`
 }
 
 type ruleMatcher struct {
@@ -104,6 +145,7 @@ type ruleMatcher struct {
 	MessageContains                  stringList `json:"message_contains"`
 	Exception                        string     `json:"exception"`
 	ExceptionContains                stringList `json:"exception_contains"`
+	ExcludeExceptionContains         stringList `json:"exclude_exception_contains"`
 	BreadcrumbMessageContains        stringList `json:"breadcrumb_message_contains"`
 	ExcludeBreadcrumbMessageContains stringList `json:"exclude_breadcrumb_message_contains"`
 }
@@ -126,24 +168,23 @@ func (items *stringList) UnmarshalJSON(data []byte) error {
 
 type ruleCora struct{ packs map[string]experiencePack }
 
-//go:embed experience/*.json
-var embeddedExperiencePacks embed.FS
-
-var (
-	defaultCoraOnce sync.Once
-	defaultCora     Cora
-	defaultCoraErr  error
-)
-
 func defaultCoraCore() (Cora, error) {
-	defaultCoraOnce.Do(func() {
-		defaultCora, defaultCoraErr = loadRuleCora(embeddedExperiencePacks)
-	})
-	return defaultCora, defaultCoraErr
+	return &ruleCora{packs: make(map[string]experiencePack)}, nil
 }
 
-func loadRuleCora(files embed.FS) (Cora, error) {
-	entries, err := files.ReadDir("experience")
+// LoadExperiencePacks loads product-specific rules from an explicit directory.
+// Public Cora binaries contain no product packs; deployments opt in to private
+// packs through configuration.
+func LoadExperiencePacks(directory string) (Cora, error) {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return defaultCoraCore()
+	}
+	return loadRuleCora(os.DirFS(directory))
+}
+
+func loadRuleCora(files fs.FS) (Cora, error) {
+	entries, err := fs.ReadDir(files, ".")
 	if err != nil {
 		return nil, fmt.Errorf("read Cora experience packs: %w", err)
 	}
@@ -152,7 +193,7 @@ func loadRuleCora(files embed.FS) (Cora, error) {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
 			continue
 		}
-		data, err := files.ReadFile("experience/" + entry.Name())
+		data, err := fs.ReadFile(files, entry.Name())
 		if err != nil {
 			return nil, fmt.Errorf("read experience pack %s: %w", entry.Name(), err)
 		}
@@ -196,6 +237,12 @@ func validateExperiencePack(pack experiencePack) error {
 		if rule.ID == "" || !validDecision(rule.Decision) || !priority[rule.Decision] {
 			return fmt.Errorf("rule %q has invalid id, decision, or priority", rule.ID)
 		}
+		if strings.ContainsAny(rule.RootCauseKey, " \t\r\n") {
+			return fmt.Errorf("rule %q has invalid root_cause_key", rule.ID)
+		}
+		if rule.TraceRole != "" && rule.TraceRole != TraceRoleUnknown && rule.TraceRole != TraceRoleWrapper && rule.TraceRole != TraceRoleCause {
+			return fmt.Errorf("rule %q has invalid trace_role", rule.ID)
+		}
 	}
 	return nil
 }
@@ -206,34 +253,70 @@ func validDecision(decision string) bool {
 
 func (c *ruleCora) Decide(_ context.Context, request DecisionRequest) (CoraDecision, error) {
 	now := time.Now().UTC()
+	derivedKey := derivedRootCauseKey(request.Event, request.Fingerprint)
 	pack, exists := c.packs[request.Event.ProductLine]
 	if !exists {
 		return CoraDecision{
 			Decision: DecisionObserve, Category: "untrained-product-line",
-			RuleID: "cora.default.untrained-product-line",
-			Reason: "no product-line experience pack; keep visible for review",
-			Source: "framework_default", DecidedAt: now,
+			RootCauseKey: derivedKey,
+			RuleID:       "cora.default.untrained-product-line",
+			Reason:       "no product-line experience pack; keep visible for review",
+			Source:       "framework_default", DecidedAt: now,
 		}, nil
 	}
 	for _, rule := range pack.Rules {
 		if rule.Match.matches(request.Event) {
+			rootCauseKey := rule.RootCauseKey
+			if rootCauseKey == "" {
+				rootCauseKey = derivedKey
+			}
 			return CoraDecision{
 				Decision: rule.Decision, Category: rule.Category, RuleID: rule.ID,
-				Reason: rule.Reason, Source: "experience_pack",
-				ExperienceVersion: pack.Version, DecidedAt: now,
+				RootCauseKey: rootCauseKey,
+				Reason:       rule.Reason, Source: "experience_pack",
+				ExperienceVersion: pack.Version, TraceRole: normalizedTraceRole(rule.TraceRole), DecidedAt: now,
 			}, nil
 		}
 	}
 	return CoraDecision{
 		Decision: pack.DefaultDecision, Category: "unmatched",
-		RuleID: "cora.default.unmatched", Reason: "no stable product-line rule matched",
-		Source: "experience_pack", ExperienceVersion: pack.Version, DecidedAt: now,
+		RootCauseKey: derivedKey,
+		RuleID:       "cora.default.unmatched", Reason: "no stable product-line rule matched",
+		Source: "experience_pack", ExperienceVersion: pack.Version, TraceRole: TraceRoleUnknown, DecidedAt: now,
 	}, nil
+}
+
+func normalizedTraceRole(role string) string {
+	if role == "" {
+		return TraceRoleUnknown
+	}
+	return role
+}
+
+func (c *ruleCora) ClassifyRootCause(ctx context.Context, request DecisionRequest) (string, error) {
+	decision, err := c.Decide(ctx, request)
+	if err != nil {
+		return "", err
+	}
+	return decision.RootCauseKey, nil
+}
+
+func derivedRootCauseKey(event Event, fingerprint string) string {
+	message := numberPattern.ReplaceAllString(uuidPattern.ReplaceAllString(event.Message, "<uuid>"), "<n>")
+	message = strings.Join(strings.Fields(message), " ")
+	if message == "" {
+		if fingerprint == "" {
+			fingerprint = Fingerprint(event)
+		}
+		return "fingerprint:" + fingerprint
+	}
+	sum := sha256.Sum256([]byte(message))
+	return "message:" + hex.EncodeToString(sum[:12])
 }
 
 func (match ruleMatcher) matches(event Event) bool {
 	classText := event.Logger + "\n" + event.Stacktrace
-	methodText := event.Stacktrace
+	methodText := event.Method + "\n" + event.Stacktrace
 	exceptionText := event.ExceptionType + "\n" + event.Stacktrace
 	var breadcrumbText strings.Builder
 	for _, breadcrumb := range event.Breadcrumbs {
@@ -246,6 +329,7 @@ func (match ruleMatcher) matches(event Event) bool {
 		containsAnyIfSet(event.Message, match.MessageContains) &&
 		containsIfSet(exceptionText, match.Exception) &&
 		containsAnyIfSet(exceptionText, match.ExceptionContains) &&
+		containsNoneIfSet(exceptionText, match.ExcludeExceptionContains) &&
 		containsAnyIfSet(breadcrumbText.String(), match.BreadcrumbMessageContains) &&
 		containsNoneIfSet(breadcrumbText.String(), match.ExcludeBreadcrumbMessageContains)
 }

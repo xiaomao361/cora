@@ -1,0 +1,24 @@
+{
+  "schema_version": "cora.model-manifest.v1",
+  "model": "cora",
+  "version": "0.1.0",
+  "mode": "deterministic_rules",
+  "decision_contract": {
+    "request": "schemas/cora-decision-request.v1.schema.json",
+    "response": "schemas/cora-decision.v1.schema.json"
+  },
+  "decisions": ["attention", "observe", "ignore"],
+  "fail_open_decision": "observe",
+  "product_lines": [
+    {
+      "product_line": "payments",
+      "experience_pack": "config/experience-packs/payments.example.json",
+      "experience_version": "payments-example-v1",
+      "experience_sha256": "30d5ee631c5b2b8a4f47437960fe64abfc5ba5cfee23c9cf390d0b2d56d2adcb"
+    }
+  ],
+  "evaluation": {
+    "status": "example_only",
+    "statistical_model_ready": false
+  }
+}

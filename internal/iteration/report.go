@@ -29,6 +29,19 @@ func renderShadowMarkdown(report ShadowEval) string {
 		fmt.Fprintf(&output, "| `%s` | %d | %d |\n", key, report.ProblemTransitions[key], report.OccurrenceTransitions[key])
 	}
 
+	output.WriteString("\n## Error identity table\n\n")
+	output.WriteString("| Problem | Rule | Error | Key signature | Decision | Occurrences | Related rules |\n")
+	output.WriteString("|---|---|---|---|---|---:|---|\n")
+	for _, item := range report.ErrorIdentities {
+		related := "-"
+		if len(item.RelatedRuleIDs) > 0 {
+			related = "`" + strings.Join(item.RelatedRuleIDs, "`, `") + "`"
+		}
+		fmt.Fprintf(&output, "| #%d / `%s` | `%s` | %s | %s | `%s` | %d | %s |\n",
+			item.ProblemID, shortFingerprint(item.Fingerprint), item.RuleID, markdownCell(item.Name, 48),
+			markdownCell(item.Signature, 96), item.Decision, item.WindowCount, related)
+	}
+
 	output.WriteString("\n## Ignore frequency escalation review\n\n")
 	if len(report.FrequencyEscalations) == 0 {
 		output.WriteString("No ignore rule crossed the configured frequency threshold.\n")
@@ -50,4 +63,24 @@ func renderShadowMarkdown(report ShadowEval) string {
 		fmt.Fprintf(&output, "- %s\n", note)
 	}
 	return output.String()
+}
+
+func shortFingerprint(value string) string {
+	if len(value) <= 8 {
+		return value
+	}
+	return value[:8]
+}
+
+func markdownCell(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.ReplaceAll(value, "|", "\\|")
+	runes := []rune(value)
+	if len(runes) > limit {
+		value = string(runes[:limit-1]) + "…"
+	}
+	if value == "" {
+		return "-"
+	}
+	return value
 }
