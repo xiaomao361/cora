@@ -57,6 +57,11 @@ All fact and MCP queries require an explicit product line. Problem detail and
 outcome writes also require service and fingerprint; `root_cause_key` can select
 one cause when a fingerprint has split into multiple Problems.
 
+The MCP surface also exposes `cora_retrieve_cases` for deterministic, read-only
+retrieval of similar handled Cases when the selected Problem is currently
+`cora.default.unmatched`. The retrieved Case outcomes are evidence only and do
+not replace the stored Core decision.
+
 ## Validation
 
 ```sh

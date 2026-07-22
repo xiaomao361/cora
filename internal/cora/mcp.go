@@ -39,6 +39,18 @@ type getProblemOutput struct {
 	Detail ProblemDetail `json:"detail"`
 }
 
+type retrieveCasesInput struct {
+	ProductLine  string `json:"product_line" jsonschema:"product line owning the unmatched problem"`
+	Service      string `json:"service" jsonschema:"service owning the unmatched problem"`
+	Fingerprint  string `json:"fingerprint" jsonschema:"Cora problem fingerprint"`
+	RootCauseKey string `json:"root_cause_key,omitempty" jsonschema:"stored root cause identity; omit to select the latest matching problem"`
+	Limit        int    `json:"limit,omitempty" jsonschema:"maximum similar handled Cases from 1 to 20; defaults to 5"`
+}
+
+type retrieveCasesOutput struct {
+	Retrieval CaseRetrieval `json:"retrieval"`
+}
+
 type iterationSnapshotInput struct {
 	ProductLine  string `json:"product_line" jsonschema:"product line to query; facts never cross this boundary"`
 	BusinessDate string `json:"business_date" jsonschema:"business date in YYYY-MM-DD"`
@@ -111,6 +123,22 @@ func NewMCPHandler(store *Store) http.Handler {
 		return nil, getProblemOutput{Detail: detail}, err
 	})
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name: "cora_retrieve_cases",
+		Description: "Retrieve deterministic, read-only evidence from similar handled Cases for one cora.default.unmatched Problem. " +
+			"Results stay inside the product line and include case-level root_cause, action, prior decision context, score, and auditable match reasons. " +
+			"This tool never changes the current decision.",
+	}, func(ctx context.Context, _ *mcpsdk.CallToolRequest, input retrieveCasesInput) (*mcpsdk.CallToolResult, retrieveCasesOutput, error) {
+		retrieval, err := store.RetrieveCases(ctx, input.ProductLine, input.Service, input.Fingerprint,
+			input.RootCauseKey, input.Limit)
+		if errors.Is(err, sql.ErrNoRows) {
+			err = fmt.Errorf("problem not found in product line %q and service %q", input.ProductLine, input.Service)
+		}
+		if err == nil {
+			retrieval = boundCaseRetrievalForMCP(retrieval)
+		}
+		return nil, retrieveCasesOutput{Retrieval: retrieval}, err
+	})
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name: "cora_iteration_snapshot",
 		Description: "Summarize all Cora decisions with occurrences in one explicit product-line business date. " +
 			"Returns daily and prior-window counts, nodes, cases, and rule identity without raw samples or production writes.",
@@ -160,11 +188,21 @@ func NewMCPHandler(store *Store) http.Handler {
 func boundProblemDetailForMCP(detail ProblemDetail) ProblemDetail {
 	detail.Problem = boundProblemForMCP(detail.Problem)
 	for index := range detail.Cases {
-		detail.Cases[index].ContextSnapshot.Problem = boundProblemForMCP(
-			detail.Cases[index].ContextSnapshot.Problem,
-		)
+		detail.Cases[index] = boundProblemCaseForMCP(detail.Cases[index])
 	}
 	return detail
+}
+
+func boundCaseRetrievalForMCP(retrieval CaseRetrieval) CaseRetrieval {
+	for index := range retrieval.Cases {
+		retrieval.Cases[index].Case = boundProblemCaseForMCP(retrieval.Cases[index].Case)
+	}
+	return retrieval
+}
+
+func boundProblemCaseForMCP(item ProblemCase) ProblemCase {
+	item.ContextSnapshot.Problem = boundProblemForMCP(item.ContextSnapshot.Problem)
+	return item
 }
 
 func boundProblemForMCP(problem Problem) Problem {

@@ -20,6 +20,22 @@ The JSON contracts live under `schemas/`.
 - Core error or invalid decision: fail open to `observe`; occurrence facts still persist.
 - Product-line Packs never match events from another product line.
 
+## Unmatched Case retrieval
+
+`cora_retrieve_cases` provides read-only evidence for a stored Problem whose
+current rule is `cora.default.unmatched`. It ranks up to 20 handled Cases from
+the same product line using deterministic signals such as root-cause identity,
+fingerprint, service, exception type, logger, method, normalized message, and
+application stack frames. A minimum evidence score prevents the tool from
+filling the result set with Cases that share only a weak signal such as service.
+
+Each result includes the immutable Case's `root_cause`, `action`, prior decision
+snapshot, score, and explicit match reasons. Retrieval does not change the
+current decision, does not use unhandled investigations, and never crosses the
+product-line boundary. An Agent or future LLM judgment remains responsible for
+interpreting the evidence and recording any confirmed outcome through
+`cora_record_outcome`.
+
 ## Identity
 
 The stored Problem identity is

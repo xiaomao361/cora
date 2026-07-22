@@ -10,6 +10,7 @@ means.
 application logs -> Cora Agent -> Cora Server -> Problems -> MCP/HTTP review
                                                    |
                                                    +-> immutable outcome Cases
+                                                   +-> unmatched Case retrieval
                                                    +-> offline iteration artifacts
 ```
 
@@ -27,6 +28,8 @@ to `observe`.
 - Trace projection is read-only evidence; it does not rewrite decisions.
 - Human outcomes append Cases and may change lifecycle state, but do not
   automatically promote new production rules.
+- Unmatched Case retrieval is read-only and product-line scoped; retrieved
+  outcomes are evidence for an Agent, not an automatic decision override.
 - SQLite is the v0 operational store; backups and retention changes remain explicit.
 
 ## Public Core and private Packs

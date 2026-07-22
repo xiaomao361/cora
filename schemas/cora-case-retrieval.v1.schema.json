@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cora.local/schemas/cora-case-retrieval.v1.schema.json",
+  "title": "Cora Case Retrieval v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "product_line",
+    "query_problem_id",
+    "query_rule_id",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": { "const": "cora.case-retrieval.v1" },
+    "product_line": { "type": "string", "minLength": 1 },
+    "query_problem_id": { "type": "integer", "minimum": 1 },
+    "query_rule_id": { "const": "cora.default.unmatched" },
+    "cases": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["score", "match_reasons", "case"],
+        "properties": {
+          "score": { "type": "integer", "minimum": 1 },
+          "match_reasons": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "enum": [
+                "same_fingerprint",
+                "same_root_cause_key",
+                "same_service",
+                "same_exception_type",
+                "same_logger",
+                "same_method",
+                "same_normalized_message",
+                "shared_application_frame"
+              ]
+            }
+          },
+          "case": { "$ref": "cora-case.v1.schema.json" }
+        }
+      }
+    }
+  }
+}
